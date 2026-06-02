@@ -84,8 +84,8 @@ pnpm run deploy
 
 ## GitHub Actions Deploy
 
-The repo includes `.github/workflows/deploy.yml`. It expects these repository
-secrets:
+The repo includes `.github/workflows/deploy.yml` as a manual
+`workflow_dispatch` deploy. It expects these repository secrets:
 
 - `CLOUDFLARE_API_TOKEN` — Cloudflare API token that can edit Workers, D1, and Worker secrets
 - `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id

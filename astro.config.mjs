@@ -7,6 +7,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   site: 'https://translate.grimoiremods.com',
+  output: 'server',
   adapter: cloudflare(),
   integrations: [react()],
   vite: {
