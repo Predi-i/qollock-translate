@@ -1,0 +1,61 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Apply D1 migrations
+        run: pnpm exec wrangler d1 migrations apply grimoire-translate --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Worker
+        run: pnpm exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Upload Worker secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$CF_ACCESS_TEAM" | pnpm exec wrangler secret put CF_ACCESS_TEAM
+          printf '%s' "$CF_ACCESS_AUD" | pnpm exec wrangler secret put CF_ACCESS_AUD
+          printf '%s' "$GRIMOIRE_TRANSLATE_GITHUB_TOKEN" | pnpm exec wrangler secret put GITHUB_TOKEN
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_TEAM: ${{ secrets.CF_ACCESS_TEAM }}
+          CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
+          GRIMOIRE_TRANSLATE_GITHUB_TOKEN: ${{ secrets.GRIMOIRE_TRANSLATE_GITHUB_TOKEN }}

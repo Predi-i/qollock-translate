@@ -1,0 +1,16 @@
+# Copy to `.dev.vars` for local `wrangler dev` or Astro runs.
+#
+# Production secrets are set with:
+#   pnpm exec wrangler secret put CF_ACCESS_TEAM
+#   pnpm exec wrangler secret put CF_ACCESS_AUD
+#   pnpm exec wrangler secret put GITHUB_TOKEN
+
+CF_ACCESS_TEAM=
+CF_ACCESS_AUD=
+TRANSLATOR_EMAIL=local-dev@grimoire
+
+# Fine-grained GitHub PAT for PR creation.
+# Required scopes/permissions on Slush97/grimoire:
+#   Contents: Read and write
+#   Pull requests: Read and write
+GITHUB_TOKEN=

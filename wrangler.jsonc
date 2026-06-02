@@ -1,0 +1,32 @@
+{
+  "compatibility_date": "2026-05-16",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "name": "grimoire-translate",
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "routes": [
+    { "pattern": "translate.grimoiremods.com", "custom_domain": true }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "GITHUB_REPO": "Slush97/grimoire",
+    "GITHUB_BRANCH": "main"
+  },
+  // Create this with:
+  //   pnpm exec wrangler d1 create grimoire-translate
+  // then replace the placeholder database_id and run:
+  //   pnpm db:migrate:remote
+  "d1_databases": [
+    {
+      "binding": "TRANSLATE_DB",
+      "database_name": "grimoire-translate",
+      "database_id": "31a3de49-c84e-4000-b04a-9c33ada06476",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
