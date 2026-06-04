@@ -80,10 +80,38 @@ export async function fetchCatalog(
   return JSON.parse(decodeBase64(response.value.content)) as JsonObject;
 }
 
+// The English source changes rarely, but it was being re-fetched from GitHub on
+// every catalog load and every single save. That hammered the API (and blows the
+// 60/hr unauthenticated limit in local dev). Cache it per isolate with a short
+// TTL, and fall back to the last good copy if GitHub is briefly unavailable or
+// rate-limited.
+interface SourceCache {
+  entries: Map<string, string>;
+  at: number;
+}
+
+let sourceCache: SourceCache | null = null;
+const SOURCE_TTL_MS = 5 * 60 * 1000;
+
 export async function fetchSourceEntries(env: GitHubEnv) {
-  const source = await fetchCatalog(env, 'en');
-  if (!source) throw new Error('English source catalog was not found');
-  return flattenValues(source);
+  const now = Date.now();
+  if (sourceCache && now - sourceCache.at < SOURCE_TTL_MS) return sourceCache.entries;
+
+  let source: JsonObject | null;
+  try {
+    source = await fetchCatalog(env, 'en');
+  } catch (err) {
+    if (sourceCache) return sourceCache.entries; // serve stale rather than fail
+    throw err;
+  }
+  if (!source) {
+    if (sourceCache) return sourceCache.entries;
+    throw new Error('English source catalog was not found');
+  }
+
+  const entries = flattenValues(source);
+  sourceCache = { entries, at: now };
+  return entries;
 }
 
 export async function createTranslationPullRequest(
