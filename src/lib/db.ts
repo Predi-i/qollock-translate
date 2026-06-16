@@ -46,6 +46,15 @@ export interface TranslationSuggestionRow {
   updated_at: string;
 }
 
+export interface GlossaryTermRow {
+  language_code: string;
+  source_term: string;
+  target_term: string;
+  notes: string;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 export async function listLanguages(db: D1Database): Promise<LanguageRow[]> {
   const result = await db
     .prepare<LanguageRow>(
@@ -85,6 +94,73 @@ export async function getTranslations(db: D1Database, languageCode: string): Pro
     .bind(languageCode)
     .all();
   return result.results ?? [];
+}
+
+export async function listGlossaryTerms(db: D1Database, languageCode: string): Promise<GlossaryTermRow[]> {
+  const result = await db
+    .prepare<GlossaryTermRow>(
+      `SELECT language_code, source_term, target_term, notes, updated_by, updated_at
+       FROM glossary_terms
+       WHERE language_code = ?
+       ORDER BY lower(source_term)`
+    )
+    .bind(languageCode)
+    .all();
+  return result.results ?? [];
+}
+
+export async function getGlossaryTerm(
+  db: D1Database,
+  languageCode: string,
+  sourceTerm: string
+): Promise<GlossaryTermRow | null> {
+  return await db
+    .prepare<GlossaryTermRow>(
+      `SELECT language_code, source_term, target_term, notes, updated_by, updated_at
+       FROM glossary_terms
+       WHERE language_code = ? AND source_term = ?`
+    )
+    .bind(languageCode, sourceTerm)
+    .first();
+}
+
+export async function upsertGlossaryTerm(
+  db: D1Database,
+  params: {
+    languageCode: string;
+    sourceTerm: string;
+    targetTerm: string;
+    notes: string;
+    updatedBy: string;
+  }
+): Promise<GlossaryTermRow | null> {
+  await db
+    .prepare(
+      `INSERT INTO glossary_terms (
+         language_code, source_term, target_term, notes, updated_by, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+       ON CONFLICT(language_code, source_term) DO UPDATE SET
+         target_term = excluded.target_term,
+         notes = excluded.notes,
+         updated_by = excluded.updated_by,
+         updated_at = excluded.updated_at`
+    )
+    .bind(params.languageCode, params.sourceTerm, params.targetTerm, params.notes, params.updatedBy)
+    .run();
+
+  return await getGlossaryTerm(db, params.languageCode, params.sourceTerm);
+}
+
+export async function deleteGlossaryTerm(
+  db: D1Database,
+  languageCode: string,
+  sourceTerm: string
+): Promise<void> {
+  await db
+    .prepare('DELETE FROM glossary_terms WHERE language_code = ? AND source_term = ?')
+    .bind(languageCode, sourceTerm)
+    .run();
 }
 
 export async function getTranslation(

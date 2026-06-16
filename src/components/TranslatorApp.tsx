@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  BookOpen,
   Check,
   Download,
   ExternalLink,
@@ -12,17 +13,21 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Save,
   ShieldCheck,
+  Trash2,
   Undo2,
   Users,
   X,
 } from 'lucide-react';
+import { isLockedGlossaryTerm, lockedGlossaryNote, SHORT_GLOSSARY_TERMS } from '../lib/glossary';
 import { COMMON_LANGUAGES, flagForCode, sectionForKey, type SectionMeta } from '../lib/languages';
 
 type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
 type Filter = 'open' | 'flagged' | 'done' | 'review' | 'all';
 type View = 'translations' | 'contributors';
 type ContributorRole = 'translator' | 'reviewer' | 'admin';
+type GlossaryFilter = 'missing' | 'saved' | 'all';
 
 interface Language {
   code: string;
@@ -69,6 +74,34 @@ interface Contributor {
   pending_suggestion_count: number;
 }
 
+interface GlossaryTerm {
+  sourceTerm: string;
+  targetTerm: string;
+  notes: string;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+interface GlossaryDraft {
+  targetTerm: string;
+  notes: string;
+}
+
+interface GlossaryCandidate {
+  sourceTerm: string;
+  count: number;
+  examples: string[];
+}
+
+interface GlossaryListItem extends GlossaryCandidate {
+  targetTerm: string;
+  notes: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+  saved: boolean;
+  locked: boolean;
+}
+
 interface RowGroup {
   section: SectionMeta;
   rows: CatalogRow[];
@@ -86,6 +119,197 @@ interface UndoEntry {
 const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 const CODE_RE = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
+const EMPTY_GLOSSARY_MATCHES: GlossaryTerm[] = [];
+const PRIORITY_GLOSSARY_TERMS = [
+  'Grimoire',
+  'Deadlock',
+  'Deadworks',
+  'GameBanana',
+  'Steam',
+  'Discord',
+  'Statlocker',
+  'mod',
+  'mods',
+  'mod manager',
+  'profile',
+  'profiles',
+  'portable profile',
+  'share code',
+  'game path',
+  'addon',
+  'addons',
+  'VPK',
+  'GLB',
+  'gameinfo.gi',
+  '.vpk',
+  '.glb',
+  '.modprofile.json',
+  'mp1:',
+  'autoexec',
+  'autoexec.cfg',
+  'crosshair',
+  'locker',
+  'Locker',
+  'Browse',
+  'Discover',
+  'Installed',
+  'Conflicts',
+  'server',
+  'servers',
+  'relay',
+  'download',
+  'import',
+  'export',
+  'publish',
+  'snapshot',
+  'restore',
+  'update',
+  'variant',
+  'variants',
+  'merge',
+  'unmerge',
+  'load order',
+  'override',
+  'overrides',
+  'cache',
+  'NSFW',
+  'hero',
+  'heroes',
+  'hero card',
+  'ability',
+  'abilities',
+  'soul container',
+  'skin',
+  'skins',
+  'VFX',
+  'HUD',
+  'UI',
+  'FPS',
+  'ADS',
+  'MMR',
+  'replay key',
+  'match key',
+  'Launch Modded',
+];
+const GLOSSARY_STOPWORDS = new Set([
+  'a',
+  'about',
+  'above',
+  'after',
+  'again',
+  'all',
+  'also',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'back',
+  'be',
+  'because',
+  'been',
+  'before',
+  'being',
+  'below',
+  'between',
+  'both',
+  'but',
+  'by',
+  'can',
+  'cannot',
+  'cant',
+  'could',
+  'couldn',
+  'current',
+  'did',
+  'do',
+  'does',
+  'doing',
+  'done',
+  'down',
+  'during',
+  'each',
+  'either',
+  'else',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'having',
+  'here',
+  'how',
+  'if',
+  'in',
+  'into',
+  'is',
+  'it',
+  'its',
+  'just',
+  'later',
+  'left',
+  'like',
+  'may',
+  'more',
+  'most',
+  'new',
+  'next',
+  'no',
+  'none',
+  'not',
+  'now',
+  'of',
+  'off',
+  'on',
+  'once',
+  'one',
+  'only',
+  'or',
+  'other',
+  'our',
+  'out',
+  'over',
+  'own',
+  's',
+  'same',
+  'so',
+  'some',
+  'still',
+  'than',
+  'that',
+  'the',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'this',
+  'those',
+  'through',
+  'to',
+  'under',
+  'until',
+  'up',
+  'use',
+  'used',
+  'via',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'while',
+  'who',
+  'will',
+  'with',
+  'without',
+  'won',
+  'you',
+  'your',
+]);
 
 // Plain-language labels. Wire-format status values stay the same.
 function statusMeta(status: RowStatus, flagged: boolean, needsReview: boolean): { label: string; cls: string } {
@@ -132,6 +356,18 @@ export default function TranslatorApp() {
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [undoDepth, setUndoDepth] = useState(0);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const [glossary, setGlossary] = useState<Record<string, GlossaryTerm>>({});
+  const [glossaryDrafts, setGlossaryDrafts] = useState<Record<string, GlossaryDraft>>({});
+  const [glossaryQuery, setGlossaryQuery] = useState('');
+  const [glossaryFilter, setGlossaryFilter] = useState<GlossaryFilter>('missing');
+  const [savingGlossary, setSavingGlossary] = useState<Record<string, boolean>>({});
+  const [savedGlossary, setSavedGlossary] = useState<Record<string, boolean>>({});
+  // Terms saved during this session stay visible in the current view (even under
+  // the "To fill" filter) so a card never vanishes out from under the cursor
+  // before the translator is done. Cleared on filter switch or language reload.
+  const [pinnedGlossary, setPinnedGlossary] = useState<Record<string, boolean>>({});
+  const [glossaryError, setGlossaryError] = useState('');
 
   const savedValues = useRef<Map<string, string>>(new Map());
   // Undo history of saved values. We keep refs in sync so the global key
@@ -152,6 +388,11 @@ export default function TranslatorApp() {
       if (!localStorage.getItem(TUTORIAL_SEEN_KEY)) setShowHelp(true);
     } catch {
       // localStorage may be unavailable; skip the first-run tutorial.
+    }
+    try {
+      setGlossaryOpen(window.matchMedia('(min-width: 1121px)').matches);
+    } catch {
+      // matchMedia may be unavailable in tests; keep the glossary behind the button.
     }
   }, []);
 
@@ -185,7 +426,14 @@ export default function TranslatorApp() {
   }
 
   useEffect(() => {
-    if (selectedLanguage) void loadCatalog(selectedLanguage);
+    if (selectedLanguage) {
+      void loadCatalog(selectedLanguage);
+      void loadGlossary(selectedLanguage);
+    } else {
+      setGlossary({});
+      setGlossaryDrafts({});
+      setGlossaryError('');
+    }
   }, [selectedLanguage]);
 
   useEffect(() => {
@@ -226,6 +474,31 @@ export default function TranslatorApp() {
       setError((err as Error).message);
     } finally {
       setBusy('');
+    }
+  }
+
+  async function loadGlossary(languageCode = selectedLanguage) {
+    if (!languageCode) return;
+    setGlossaryError('');
+    try {
+      const result = await fetchJson<{ terms: GlossaryTerm[] }>(
+        `/api/glossary?lang=${encodeURIComponent(languageCode)}`
+      );
+      if (selectedLanguageRef.current !== languageCode) return;
+      const terms = Object.fromEntries(result.terms.map((term) => [term.sourceTerm, term]));
+      setGlossary(terms);
+      setGlossaryDrafts(
+        Object.fromEntries(
+          result.terms.map((term) => [
+            term.sourceTerm,
+            { targetTerm: term.targetTerm, notes: term.notes },
+          ])
+        )
+      );
+      setSavedGlossary({});
+      setPinnedGlossary({});
+    } catch (err) {
+      setGlossaryError((err as Error).message);
     }
   }
 
@@ -451,6 +724,20 @@ export default function TranslatorApp() {
     return out;
   }, [filteredRows]);
 
+  const glossaryCandidates = useMemo(() => buildGlossaryCandidates(catalog?.rows ?? []), [catalog]);
+  const glossaryItems = useMemo(
+    () => buildGlossaryItems(glossaryCandidates, glossary, glossaryQuery, glossaryFilter, pinnedGlossary),
+    [glossaryCandidates, glossary, glossaryQuery, glossaryFilter, pinnedGlossary]
+  );
+  const glossaryMatchesByKey = useMemo(
+    () => buildGlossaryMatches(catalog?.rows ?? [], Object.values(glossary), glossaryCandidates),
+    [catalog, glossary, glossaryCandidates]
+  );
+  const savedGlossaryCount = useMemo(
+    () => Object.values(glossary).filter((term) => term.targetTerm.trim()).length,
+    [glossary]
+  );
+
   const pickerOptions = useMemo(() => {
     const taken = new Set(languages.map((l) => l.code.toLowerCase()));
     const needle = pickerQuery.trim().toLowerCase();
@@ -472,29 +759,48 @@ export default function TranslatorApp() {
     return { code: raw, name: displayName(raw), flag: flagForCode(raw) };
   }, [pickerQuery, languages]);
 
-  // Click a {{placeholder}} chip to drop it into that row's box at the cursor
-  // (or append it), so translators never have to retype the braces by hand.
-  const insertPlaceholder = useCallback((key: string, name: string) => {
-    const token = `{{${name}}}`;
+  const insertIntoDraft = useCallback((key: string, token: string, padded = false) => {
     const el = document.getElementById(`tx-${key}`) as HTMLTextAreaElement | null;
     if (!el) {
       setDrafts((d) => {
         const cur = d[key] ?? '';
-        return { ...d, [key]: cur && !cur.endsWith(' ') ? `${cur} ${token}` : `${cur}${token}` };
+        const next = padded && cur && !cur.endsWith(' ') ? `${cur} ${token}` : `${cur}${token}`;
+        return { ...d, [key]: next };
       });
       return;
     }
     const cur = el.value;
     const start = el.selectionStart ?? cur.length;
     const end = el.selectionEnd ?? cur.length;
-    const next = cur.slice(0, start) + token + cur.slice(end);
-    const caret = start + token.length;
+    const before = cur.slice(0, start);
+    const after = cur.slice(end);
+    const prefix = padded && before && !/\s$/.test(before) ? ' ' : '';
+    const suffix = padded && after && !/^[\s.,!?:;)\]}]/.test(after) ? ' ' : '';
+    const insertion = `${prefix}${token}${suffix}`;
+    const next = before + insertion + after;
+    const caret = before.length + prefix.length + token.length;
     setDrafts((d) => ({ ...d, [key]: next }));
     requestAnimationFrame(() => {
       el.focus();
       el.setSelectionRange(caret, caret);
     });
   }, []);
+
+  // Click a {{placeholder}} chip to drop it into that row's box at the cursor
+  // (or append it), so translators never have to retype the braces by hand.
+  const insertPlaceholder = useCallback(
+    (key: string, name: string) => {
+      insertIntoDraft(key, `{{${name}}}`);
+    },
+    [insertIntoDraft]
+  );
+
+  const insertGlossaryTerm = useCallback(
+    (key: string, targetTerm: string) => {
+      insertIntoDraft(key, targetTerm, true);
+    },
+    [insertIntoDraft]
+  );
 
   function focusKey(key: string | undefined) {
     if (!key) return;
@@ -515,6 +821,91 @@ export default function TranslatorApp() {
   const handleChange = useCallback((key: string, value: string) => {
     setDrafts((d) => ({ ...d, [key]: value }));
   }, []);
+
+  const handleGlossaryDraftChange = useCallback(
+    (sourceTerm: string, patch: Partial<GlossaryDraft>) => {
+      setGlossaryDrafts((drafts) => {
+        const current = drafts[sourceTerm] ?? {
+          targetTerm: glossary[sourceTerm]?.targetTerm ?? '',
+          notes: glossary[sourceTerm]?.notes ?? '',
+        };
+        return { ...drafts, [sourceTerm]: { ...current, ...patch } };
+      });
+    },
+    [glossary]
+  );
+
+  const saveGlossaryTerm = useCallback(
+    async (sourceTerm: string) => {
+      const languageCode = selectedLanguageRef.current;
+      if (!languageCode) return;
+
+      const current = glossary[sourceTerm];
+      const draft = glossaryDrafts[sourceTerm] ?? {
+        targetTerm: current?.targetTerm ?? '',
+        notes: current?.notes ?? '',
+      };
+      const targetTerm = draft.targetTerm.trim();
+      const notes = draft.notes.trim();
+      if (!targetTerm) return;
+
+      setSavingGlossary((state) => ({ ...state, [sourceTerm]: true }));
+      setGlossaryError('');
+      try {
+      const result = await fetchJson<{ term: GlossaryTerm | null }>('/api/glossary', {
+        method: 'POST',
+        body: JSON.stringify({ languageCode, sourceTerm, targetTerm, notes }),
+      });
+      if (selectedLanguageRef.current !== languageCode) return;
+      if (result.term) {
+          setGlossary((terms) => ({ ...terms, [result.term!.sourceTerm]: result.term! }));
+          setGlossaryDrafts((drafts) => ({
+            ...drafts,
+            [result.term!.sourceTerm]: { targetTerm: result.term!.targetTerm, notes: result.term!.notes },
+          }));
+          setSavedGlossary((state) => ({ ...state, [result.term!.sourceTerm]: true }));
+          setPinnedGlossary((pins) => ({ ...pins, [result.term!.sourceTerm.toLowerCase()]: true }));
+          window.setTimeout(
+            () => setSavedGlossary((state) => ({ ...state, [result.term!.sourceTerm]: false })),
+            1400
+          );
+        }
+      } catch (err) {
+        setGlossaryError((err as Error).message);
+      } finally {
+        setSavingGlossary((state) => ({ ...state, [sourceTerm]: false }));
+      }
+    },
+    [glossary, glossaryDrafts]
+  );
+
+  const deleteGlossaryTerm = useCallback(
+    async (sourceTerm: string) => {
+      const languageCode = selectedLanguageRef.current;
+      if (!languageCode) return;
+
+      setSavingGlossary((state) => ({ ...state, [sourceTerm]: true }));
+      setGlossaryError('');
+      try {
+        await fetchJson('/api/glossary', {
+          method: 'DELETE',
+          body: JSON.stringify({ languageCode, sourceTerm }),
+        });
+        if (selectedLanguageRef.current !== languageCode) return;
+        setGlossary((terms) => {
+          const next = { ...terms };
+          delete next[sourceTerm];
+          return next;
+        });
+        setGlossaryDrafts((drafts) => ({ ...drafts, [sourceTerm]: { targetTerm: '', notes: '' } }));
+      } catch (err) {
+        setGlossaryError((err as Error).message);
+      } finally {
+        setSavingGlossary((state) => ({ ...state, [sourceTerm]: false }));
+      }
+    },
+    []
+  );
 
   const toggleCheck = useCallback(
     (row: CatalogRow, value: string, reviewed: boolean) => {
@@ -590,6 +981,17 @@ export default function TranslatorApp() {
             <HelpCircle size={16} />
             Help
           </button>
+          {view === 'translations' ? (
+            <button
+              className={`btn ${glossaryOpen ? 'btn-secondary' : ''}`}
+              type="button"
+              title="Open or close the glossary helper"
+              onClick={() => setGlossaryOpen((open) => !open)}
+            >
+              <BookOpen size={16} />
+              Glossary
+            </button>
+          ) : null}
           {view === 'translations' ? (
             <button
               className="btn"
@@ -724,7 +1126,7 @@ export default function TranslatorApp() {
           </section>
         </main>
       ) : (
-        <main className="workspace workspace--inline">
+        <main className={`workspace workspace--inline ${glossaryOpen ? 'workspace--glossary' : ''}`}>
         <aside className="rail">
           <div className="section">
             <div className="section-title">Languages</div>
@@ -867,12 +1269,14 @@ export default function TranslatorApp() {
                       saved={!!savedKeys[row.key]}
                       error={rowErrors[row.key]}
                       activeLanguageName={activeLanguageName}
+                      glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
                       onChange={handleChange}
                       onKeyDown={onRowKeyDown}
                       onBlur={commitRow}
                       onToggleCheck={toggleCheck}
                       onToggleReview={toggleReview}
                       onInsertPlaceholder={insertPlaceholder}
+                      onInsertGlossaryTerm={insertGlossaryTerm}
                     />
                   ))}
                 </div>
@@ -880,6 +1284,30 @@ export default function TranslatorApp() {
             )}
           </div>
         </section>
+
+        {glossaryOpen ? (
+          <GlossaryPanel
+            activeLanguageName={activeLanguageName}
+            items={glossaryItems}
+            drafts={glossaryDrafts}
+            filter={glossaryFilter}
+            query={glossaryQuery}
+            error={glossaryError}
+            candidateCount={glossaryCandidates.length}
+            savedCount={savedGlossaryCount}
+            saving={savingGlossary}
+            saved={savedGlossary}
+            onClose={() => setGlossaryOpen(false)}
+            onFilterChange={(next) => {
+              setGlossaryFilter(next);
+              setPinnedGlossary({});
+            }}
+            onQueryChange={setGlossaryQuery}
+            onDraftChange={handleGlossaryDraftChange}
+            onSave={saveGlossaryTerm}
+            onDelete={deleteGlossaryTerm}
+          />
+        ) : null}
       </main>
       )}
 
@@ -1012,7 +1440,7 @@ export default function TranslatorApp() {
                   <div>
                     <strong>Keep the {'{{tags}}'}.</strong> Anything inside double braces, like{' '}
                     <span className="placeholder">{'{{count}}'}</span>, is a slot the app fills in. Click the chip
-                    under the English to drop it into your text. We warn you (
+                    under the English, or press <kbd>Tab</kbd> in the box, to drop it into your text. We warn you (
                     <span className="badge flagged">Needs fix</span>) if one goes missing.
                   </div>
                 </li>
@@ -1037,6 +1465,12 @@ export default function TranslatorApp() {
                   <Flag size={15} /> Not sure about one? Hit <strong>Review</strong> to flag it. Flagged strings
                   gather under a <strong>To review</strong> tab so someone can take a second look.
                 </div>
+                <div className="guide-tip">
+                  <BookOpen size={15} /> Press <kbd>Tab</kbd> in any box to open a list of its tags and saved
+                  glossary words. Use <kbd>↑</kbd>/<kbd>↓</kbd> to pick, type to filter, <kbd>Enter</kbd> to insert,{' '}
+                  <kbd>Esc</kbd> to close. Open the <strong>Glossary</strong> to agree on how key words get
+                  translated so everyone stays consistent.
+                </div>
               </div>
             </div>
             <div className="modal-foot">
@@ -1058,12 +1492,14 @@ interface TranslationRowProps {
   saved: boolean;
   error?: string;
   activeLanguageName: string;
+  glossaryMatches: GlossaryTerm[];
   onChange: (key: string, value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => void;
   onBlur: (row: CatalogRow, value: string) => void;
   onToggleCheck: (row: CatalogRow, value: string, reviewed: boolean) => void;
   onToggleReview: (row: CatalogRow, value: string, needsReview: boolean) => void;
   onInsertPlaceholder: (key: string, name: string) => void;
+  onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
 }
 
 // One translation row, memoized so a keystroke only re-renders the row being
@@ -1076,18 +1512,91 @@ const TranslationRow = memo(function TranslationRow({
   saved,
   error,
   activeLanguageName,
+  glossaryMatches,
   onChange,
   onKeyDown,
   onBlur,
   onToggleCheck,
   onToggleReview,
   onInsertPlaceholder,
+  onInsertGlossaryTerm,
 }: TranslationRowProps) {
   const live = checkPlaceholders(row.source, value);
   const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
   const reviewed = row.status === 'reviewed';
   const needsReview = row.needsReview;
   const meta = statusMeta(row.status, flagged, needsReview);
+
+  // Keyboard-driven insert menu. Tab opens it; arrows move; typing filters;
+  // Enter inserts at the cursor; Esc closes. Focus never leaves the textarea,
+  // so the row is not blurred/committed while the translator picks a fill-in.
+  const [menu, setMenu] = useState<{ query: string; index: number } | null>(null);
+  const menuItems = useMemo(() => {
+    const items = [
+      ...row.placeholders.map((name) => ({
+        key: `ph-${name}`,
+        primary: `{{${name}}}`,
+        tag: 'placeholder',
+        filter: name,
+        insert: () => onInsertPlaceholder(row.key, name),
+      })),
+      ...glossaryMatches.map((term) => ({
+        key: `gl-${term.sourceTerm}`,
+        primary: `${term.sourceTerm} -> ${term.targetTerm}`,
+        tag: term.sourceTerm.toLowerCase() === term.targetTerm.toLowerCase() ? 'keep' : 'glossary',
+        filter: `${term.sourceTerm} ${term.targetTerm}`,
+        insert: () => onInsertGlossaryTerm(row.key, term.targetTerm),
+      })),
+    ];
+    const q = menu?.query.trim().toLowerCase() ?? '';
+    return q ? items.filter((it) => it.filter.toLowerCase().includes(q)) : items;
+  }, [row.placeholders, row.key, glossaryMatches, menu?.query, onInsertPlaceholder, onInsertGlossaryTerm]);
+  const hasFillIns = row.placeholders.length > 0 || glossaryMatches.length > 0;
+
+  const onTextareaKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (menu) {
+      if (event.nativeEvent.isComposing) return;
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setMenu((m) => (m ? { ...m, index: Math.min(m.index + 1, Math.max(menuItems.length - 1, 0)) } : m));
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setMenu((m) => (m ? { ...m, index: Math.max(m.index - 1, 0) } : m));
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        menuItems[menu.index]?.insert();
+        setMenu(null);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMenu(null);
+        return;
+      }
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        setMenu((m) => (m ? { ...m, query: m.query.slice(0, -1), index: 0 } : m));
+        return;
+      }
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        setMenu((m) => (m ? { ...m, query: m.query + event.key, index: 0 } : m));
+        return;
+      }
+      return;
+    }
+    if (event.key === 'Tab' && !event.shiftKey && hasFillIns) {
+      event.preventDefault();
+      setMenu({ query: '', index: 0 });
+      return;
+    }
+    onKeyDown(event, row);
+  };
+
   return (
     <div className={`trow ${flagged ? 'trow-flagged' : ''}`}>
       <div className="trow-en">
@@ -1096,13 +1605,14 @@ const TranslationRow = memo(function TranslationRow({
       </div>
       {row.placeholders.length > 0 ? (
         <div className="trow-ph">
-          <span className="trow-ph-label">Keep these (click to insert):</span>
+          <span className="trow-ph-label">Keep these (click, or press Tab):</span>
           {row.placeholders.map((item) => (
             <button
               type="button"
               className="placeholder placeholder-btn"
               key={item}
               title={`Insert {{${item}}} at the cursor`}
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => onInsertPlaceholder(row.key, item)}
             >
               {`{{${item}}}`}
@@ -1110,17 +1620,82 @@ const TranslationRow = memo(function TranslationRow({
           ))}
         </div>
       ) : null}
-      <textarea
-        id={`tx-${row.key}`}
-        className="trow-input"
-        dir="auto"
-        rows={1}
-        placeholder={`Type the ${activeLanguageName || 'translation'} here`}
-        value={value}
-        onChange={(event) => onChange(row.key, event.target.value)}
-        onKeyDown={(event) => onKeyDown(event, row)}
-        onBlur={(event) => onBlur(row, event.target.value)}
-      />
+      {glossaryMatches.length > 0 ? (
+        <div className="trow-glossary">
+          <span className="trow-glossary-label">Glossary:</span>
+          {glossaryMatches.map((term) => (
+            <button
+              type="button"
+              className="glossary-chip"
+              key={term.sourceTerm}
+              title={term.notes || `Insert "${term.targetTerm}"`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onInsertGlossaryTerm(row.key, term.targetTerm)}
+            >
+              <span className="glossary-chip-source">{term.sourceTerm}</span>
+              <span className="glossary-chip-target">{term.targetTerm}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="trow-input-wrap">
+        <textarea
+          id={`tx-${row.key}`}
+          className="trow-input"
+          dir="auto"
+          rows={1}
+          placeholder={`Type the ${activeLanguageName || 'translation'} here`}
+          value={value}
+          aria-expanded={!!menu}
+          aria-controls={menu ? `insert-menu-${row.key}` : undefined}
+          aria-activedescendant={menu && menuItems.length > 0 ? `insert-opt-${row.key}-${menu.index}` : undefined}
+          onChange={(event) => onChange(row.key, event.target.value)}
+          onKeyDown={onTextareaKeyDown}
+          onBlur={(event) => {
+            setMenu(null);
+            onBlur(row, event.target.value);
+          }}
+        />
+        {menu ? (
+          <div
+            className="insert-menu"
+            id={`insert-menu-${row.key}`}
+            role="listbox"
+            aria-label="Insert tag or glossary word"
+          >
+            <div className="insert-menu-search">
+              <Search size={13} />
+              <span className="insert-menu-query">{menu.query || 'Type to filter'}</span>
+              <span className="insert-menu-hint">Enter inserts · Esc closes</span>
+            </div>
+            <div className="insert-menu-list">
+              {menuItems.length === 0 ? (
+                <div className="insert-menu-empty">No matches</div>
+              ) : (
+                menuItems.map((it, i) => (
+                  <button
+                    type="button"
+                    role="option"
+                    id={`insert-opt-${row.key}-${i}`}
+                    aria-selected={i === menu.index}
+                    key={it.key}
+                    className={`insert-menu-item ${i === menu.index ? 'active' : ''}`}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      it.insert();
+                      setMenu(null);
+                    }}
+                    onMouseEnter={() => setMenu((m) => (m ? { ...m, index: i } : m))}
+                  >
+                    <span className="insert-menu-label">{it.primary}</span>
+                    <span className="insert-menu-tag">{it.tag}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <div className="trow-foot">
         <div className="trow-foot-left">
           {error ? (
@@ -1163,6 +1738,171 @@ const TranslationRow = memo(function TranslationRow({
   );
 });
 
+interface GlossaryPanelProps {
+  activeLanguageName: string;
+  items: GlossaryListItem[];
+  drafts: Record<string, GlossaryDraft>;
+  filter: GlossaryFilter;
+  query: string;
+  error: string;
+  candidateCount: number;
+  savedCount: number;
+  saving: Record<string, boolean>;
+  saved: Record<string, boolean>;
+  onClose: () => void;
+  onFilterChange: (filter: GlossaryFilter) => void;
+  onQueryChange: (query: string) => void;
+  onDraftChange: (sourceTerm: string, patch: Partial<GlossaryDraft>) => void;
+  onSave: (sourceTerm: string) => void;
+  onDelete: (sourceTerm: string) => void;
+}
+
+function GlossaryPanel({
+  activeLanguageName,
+  items,
+  drafts,
+  filter,
+  query,
+  error,
+  candidateCount,
+  savedCount,
+  saving,
+  saved,
+  onClose,
+  onFilterChange,
+  onQueryChange,
+  onDraftChange,
+  onSave,
+  onDelete,
+}: GlossaryPanelProps) {
+  return (
+    <aside className="glossary-pane" aria-label="Glossary">
+      <div className="glossary-head">
+        <div>
+          <div className="section-title">Glossary</div>
+          <div className="glossary-summary">
+            {savedCount} saved · {candidateCount} repeated terms
+          </div>
+        </div>
+        <button className="picker-x" type="button" title="Close glossary" onClick={onClose}>
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="glossary-controls">
+        <div className="picker-search">
+          <Search size={15} />
+          <input
+            className="picker-input"
+            placeholder="Search glossary"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+        </div>
+        <div className="segmented segmented-compact" role="tablist" aria-label="Glossary filters">
+          {[
+            ['missing', 'To fill'],
+            ['saved', 'Saved'],
+            ['all', 'All'],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={`segment ${filter === value ? 'active' : ''}`}
+              onClick={() => onFilterChange(value as GlossaryFilter)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {error ? (
+          <div className="banner banner-error glossary-error">
+            <span>{error}</span>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="glossary-list">
+        {items.length === 0 ? (
+          <div className="empty">No glossary terms match.</div>
+        ) : (
+          items.map((item) => {
+            const draft = drafts[item.sourceTerm] ?? { targetTerm: item.targetTerm, notes: item.notes };
+            const dirty = draft.targetTerm !== item.targetTerm || draft.notes !== item.notes;
+            const isSaving = !!saving[item.sourceTerm];
+            const isSaved = !!saved[item.sourceTerm];
+            return (
+              <div className={`glossary-card ${item.saved ? 'saved' : ''} ${item.locked ? 'locked' : ''}`} key={item.sourceTerm}>
+                <div className="glossary-card-head">
+                  <div className="glossary-source">
+                    <span>{item.sourceTerm}</span>
+                    <span className="glossary-count">{item.count ? `${item.count} uses` : 'custom'}</span>
+                  </div>
+                  {item.locked ? (
+                    <span className="badge shipped">Keep</span>
+                  ) : item.saved ? (
+                    <span className="badge reviewed">Saved</span>
+                  ) : null}
+                </div>
+                {item.examples.length > 0 ? (
+                  <div className="glossary-examples">{item.examples.slice(0, 2).join(' · ')}</div>
+                ) : null}
+                {item.locked ? (
+                  <div className="glossary-locked-note">{item.notes}</div>
+                ) : (
+                  <>
+                    <input
+                      className="input glossary-term-input"
+                      value={draft.targetTerm}
+                      placeholder={`${activeLanguageName || 'Target'} term`}
+                      onChange={(event) => onDraftChange(item.sourceTerm, { targetTerm: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          onSave(item.sourceTerm);
+                        }
+                      }}
+                    />
+                    <textarea
+                      className="textarea glossary-notes"
+                      rows={2}
+                      value={draft.notes}
+                      placeholder="Context note"
+                      onChange={(event) => onDraftChange(item.sourceTerm, { notes: event.target.value })}
+                    />
+                    <div className="glossary-actions">
+                      <button
+                        className="btn btn-primary glossary-save"
+                        type="button"
+                        disabled={isSaving || !draft.targetTerm.trim() || (!dirty && item.saved)}
+                        onClick={() => onSave(item.sourceTerm)}
+                      >
+                        <Save size={14} />
+                        {isSaving ? 'Saving' : isSaved ? 'Saved' : 'Save'}
+                      </button>
+                      {item.saved ? (
+                        <button
+                          className="btn btn-icon"
+                          type="button"
+                          title="Delete glossary term"
+                          disabled={isSaving}
+                          onClick={() => onDelete(item.sourceTerm)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </aside>
+  );
+}
+
 async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -1196,6 +1936,191 @@ function formatDate(value: string): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   });
+}
+
+function buildGlossaryCandidates(rows: CatalogRow[]): GlossaryCandidate[] {
+  const candidates = new Map<string, { sourceTerm: string; count: number; examples: string[]; priority: number }>();
+
+  const addHit = (rawTerm: string, source: string, priority = 0) => {
+    const sourceTerm = normalizeGlossaryTerm(rawTerm);
+    if (!sourceTerm || sourceTerm.length > 80) return;
+    const key = sourceTerm.toLowerCase();
+    const item = candidates.get(key) ?? { sourceTerm, count: 0, examples: [], priority };
+    item.count += 1;
+    item.priority = Math.max(item.priority, priority);
+    const example = compactExample(source);
+    if (example && item.examples.length < 3 && !item.examples.includes(example)) item.examples.push(example);
+    candidates.set(key, item);
+  };
+
+  for (const row of rows) {
+    const source = stripPlaceholders(row.source);
+    const sourceKey = row.key.toLowerCase();
+
+    for (const term of PRIORITY_GLOSSARY_TERMS) {
+      const keyTerm = term.toLowerCase().replace(/\s+/g, '');
+      if (matchesGlossaryTerm(source, term) || (keyTerm.length >= 5 && sourceKey.includes(keyTerm))) {
+        addHit(term, row.source, 100);
+      }
+    }
+
+    const seenWords = new Set<string>();
+    for (const word of glossaryWords(source)) {
+      const normalized = word.toLowerCase();
+      if (GLOSSARY_STOPWORDS.has(normalized) || seenWords.has(normalized)) continue;
+      seenWords.add(normalized);
+      addHit(displayGlossaryWord(word), row.source);
+    }
+  }
+
+  return [...candidates.values()]
+    .filter((item) => item.priority > 0 || item.count >= 4)
+    .sort((a, b) => b.priority - a.priority || b.count - a.count || a.sourceTerm.localeCompare(b.sourceTerm))
+    .slice(0, 160)
+    .map(({ sourceTerm, count, examples }) => ({ sourceTerm, count, examples }));
+}
+
+function buildGlossaryItems(
+  candidates: GlossaryCandidate[],
+  glossary: Record<string, GlossaryTerm>,
+  query: string,
+  filter: GlossaryFilter,
+  pinned: Record<string, boolean> = {}
+): GlossaryListItem[] {
+  const byTerm = new Map<string, GlossaryListItem>();
+  const savedByLower = new Map(Object.values(glossary).map((term) => [term.sourceTerm.toLowerCase(), term]));
+
+  for (const candidate of candidates) {
+    const saved = savedByLower.get(candidate.sourceTerm.toLowerCase());
+    const locked = isLockedGlossaryTerm(candidate.sourceTerm);
+    byTerm.set(candidate.sourceTerm.toLowerCase(), {
+      ...candidate,
+      sourceTerm: locked ? candidate.sourceTerm : saved?.sourceTerm ?? candidate.sourceTerm,
+      targetTerm: locked ? candidate.sourceTerm : saved?.targetTerm ?? '',
+      notes: locked ? lockedGlossaryNote(candidate.sourceTerm) : saved?.notes ?? '',
+      updatedBy: locked ? null : saved?.updatedBy ?? null,
+      updatedAt: locked ? null : saved?.updatedAt ?? null,
+      saved: locked || !!saved?.targetTerm.trim(),
+      locked,
+    });
+  }
+
+  for (const saved of Object.values(glossary)) {
+    if (isLockedGlossaryTerm(saved.sourceTerm)) continue;
+    const key = saved.sourceTerm.toLowerCase();
+    if (byTerm.has(key)) continue;
+    byTerm.set(key, {
+      sourceTerm: saved.sourceTerm,
+      count: 0,
+      examples: [],
+      targetTerm: saved.targetTerm,
+      notes: saved.notes,
+      updatedBy: saved.updatedBy,
+      updatedAt: saved.updatedAt,
+      saved: !!saved.targetTerm.trim(),
+      locked: false,
+    });
+  }
+
+  const needle = query.trim().toLowerCase();
+  return [...byTerm.values()].filter((item) => {
+    if (filter === 'missing' && item.saved && !pinned[item.sourceTerm.toLowerCase()]) return false;
+    if (filter === 'saved' && !item.saved) return false;
+    if (!needle) return true;
+    return (
+      item.sourceTerm.toLowerCase().includes(needle) ||
+      item.targetTerm.toLowerCase().includes(needle) ||
+      item.notes.toLowerCase().includes(needle)
+    );
+  });
+}
+
+function buildGlossaryMatches(
+  rows: CatalogRow[],
+  terms: GlossaryTerm[],
+  candidates: GlossaryCandidate[]
+): Map<string, GlossaryTerm[]> {
+  const lockedTerms = candidates
+    .filter((candidate) => isLockedGlossaryTerm(candidate.sourceTerm))
+    .map((candidate) => ({
+      sourceTerm: candidate.sourceTerm,
+      targetTerm: candidate.sourceTerm,
+      notes: lockedGlossaryNote(candidate.sourceTerm),
+      updatedBy: null,
+      updatedAt: '',
+    }));
+  const usable = [...lockedTerms, ...terms.filter((term) => !isLockedGlossaryTerm(term.sourceTerm))]
+    .filter((term) => term.sourceTerm.trim() && term.targetTerm.trim())
+    .sort((a, b) => b.sourceTerm.length - a.sourceTerm.length);
+  const out = new Map<string, GlossaryTerm[]>();
+
+  for (const row of rows) {
+    const seen = new Set<string>();
+    const matches = usable
+      .filter((term) => {
+        const key = term.sourceTerm.toLowerCase();
+        if (seen.has(key) || !matchesGlossaryTerm(row.source, term.sourceTerm)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 6);
+    if (matches.length > 0) out.set(row.key, matches);
+  }
+
+  return out;
+}
+
+function glossaryWords(source: string): string[] {
+  return (stripPlaceholders(source).match(/[A-Za-z0-9][A-Za-z0-9+.-]*(?:['’][A-Za-z]+)?/g) ?? [])
+    .map((word) => word.replace(/^[-.+]+|[-.+]+$/g, ''))
+    .filter((word) => {
+      if (!word) return false;
+      if (/['’]/.test(word)) return false;
+      if (/^\d+$/.test(word)) return false;
+      if (word.length >= 3) return true;
+      return SHORT_GLOSSARY_TERMS.has(word.toUpperCase());
+    });
+}
+
+function displayGlossaryWord(word: string): string {
+  if (/^[A-Z0-9+.-]{2,}$/.test(word)) return word;
+  return word.toLowerCase();
+}
+
+function stripPlaceholders(source: string): string {
+  return source
+    .replace(PLACEHOLDER_RE, ' ')
+    .replace(/&(apos|#39|#x27);/gi, "'")
+    .replace(/&(quot|#34|#x22);/gi, '"')
+    .replace(/&[a-z]+;/gi, ' ')
+    .replace(/[{}()[\]"“”‘’]/g, ' ');
+}
+
+function normalizeGlossaryTerm(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function compactExample(value: string): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length > 92 ? `${compact.slice(0, 89)}...` : compact;
+}
+
+function matchesGlossaryTerm(source: string, term: string): boolean {
+  const normalized = normalizeGlossaryTerm(term);
+  if (!normalized) return false;
+  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+
+  if (normalized.startsWith('.')) {
+    return new RegExp(`${escaped}($|[^A-Za-z0-9])`, 'i').test(source);
+  }
+  if (normalized.endsWith(':')) {
+    return new RegExp(`(^|[^A-Za-z0-9])${escaped}`, 'i').test(source);
+  }
+  if (isLockedGlossaryTerm(normalized) && /^[A-Z0-9]{2,5}$/.test(normalized)) {
+    return new RegExp(`(^|[^A-Za-z0-9])${escaped}s?($|[^A-Za-z0-9])`, 'i').test(source);
+  }
+
+  return new RegExp(`(^|[^A-Za-z0-9])${escaped}($|[^A-Za-z0-9])`, 'i').test(source);
 }
 
 function placeholders(value: string): string[] {

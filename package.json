@@ -10,7 +10,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "deploy": "pnpm build && wrangler deploy",
+    "deploy": "pnpm db:migrate:remote && pnpm build && wrangler deploy",
     "astro": "astro",
     "typecheck": "astro check",
     "db:migrate:local": "wrangler d1 migrations apply grimoire-translate --local",
