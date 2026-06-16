@@ -837,7 +837,7 @@ export default function TranslatorApp() {
 
   const customOption = useMemo(() => {
     const raw = pickerQuery.trim();
-    if (!raw || !CODE_RE.test(raw) || raw.toLowerCase() === 'en') return null;
+    if (!raw || !CODE_RE.test(raw)) return null;
     const taken = new Set(languages.map((l) => l.code.toLowerCase()));
     if (taken.has(raw.toLowerCase())) return null;
     if (COMMON_LANGUAGES.some((l) => l.code.toLowerCase() === raw.toLowerCase())) return null;
