@@ -10,6 +10,7 @@ export interface TranslationRow {
   translation_key: string;
   value: string;
   status: 'draft' | 'translated' | 'reviewed';
+  needs_review: number;
   translator_email: string | null;
   reviewer_email: string | null;
   updated_at: string;
@@ -76,7 +77,7 @@ export async function languageExists(db: D1Database, code: string): Promise<bool
 export async function getTranslations(db: D1Database, languageCode: string): Promise<TranslationRow[]> {
   const result = await db
     .prepare<TranslationRow>(
-      `SELECT language_code, translation_key, value, status, translator_email, reviewer_email, updated_at
+      `SELECT language_code, translation_key, value, status, needs_review, translator_email, reviewer_email, updated_at
        FROM translations
        WHERE language_code = ?
        ORDER BY translation_key`
@@ -93,7 +94,7 @@ export async function getTranslation(
 ): Promise<TranslationRow | null> {
   return await db
     .prepare<TranslationRow>(
-      `SELECT language_code, translation_key, value, status, translator_email, reviewer_email, updated_at
+      `SELECT language_code, translation_key, value, status, needs_review, translator_email, reviewer_email, updated_at
        FROM translations
        WHERE language_code = ? AND translation_key = ?`
     )
@@ -108,18 +109,20 @@ export async function upsertTranslation(
     key: string;
     value: string;
     status: 'draft' | 'translated' | 'reviewed';
+    needsReview: boolean;
     translatorEmail: string;
   }
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO translations (
-         language_code, translation_key, value, status, translator_email, reviewer_email, updated_at
+         language_code, translation_key, value, status, needs_review, translator_email, reviewer_email, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+       VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        ON CONFLICT(language_code, translation_key) DO UPDATE SET
          value = excluded.value,
          status = excluded.status,
+         needs_review = excluded.needs_review,
          translator_email = excluded.translator_email,
          reviewer_email = excluded.reviewer_email,
          updated_at = excluded.updated_at`
@@ -129,6 +132,7 @@ export async function upsertTranslation(
       params.key,
       params.value,
       params.status,
+      params.needsReview ? 1 : 0,
       params.translatorEmail,
       params.status === 'reviewed' ? params.translatorEmail : null
     )

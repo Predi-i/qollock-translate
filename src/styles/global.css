@@ -272,32 +272,6 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
-.stats-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.stat {
-  min-height: 64px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 10px;
-  background: var(--color-panel);
-}
-
-.stat-value {
-  font-size: 20px;
-  font-weight: 750;
-  line-height: 1;
-}
-
-.stat-label {
-  margin-top: 6px;
-  color: var(--color-muted);
-  font-size: 12px;
-}
-
 .search-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -306,7 +280,8 @@ textarea:focus-visible {
 
 .segmented {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 4px;
   padding: 4px;
   border-bottom: 1px solid var(--color-border);
@@ -413,6 +388,11 @@ textarea:focus-visible {
 .badge.flagged {
   border-color: rgba(245, 158, 11, 0.55);
   color: #fcd34d;
+}
+
+.badge.review {
+  border-color: rgba(20, 184, 166, 0.5);
+  color: #5eead4;
 }
 
 .editor-head {
@@ -1065,6 +1045,12 @@ kbd {
   background: rgba(34, 197, 94, 0.08);
 }
 
+.chk-flag.on {
+  border-color: rgba(20, 184, 166, 0.5);
+  color: #5eead4;
+  background: rgba(20, 184, 166, 0.08);
+}
+
 .chk:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -1111,6 +1097,13 @@ kbd {
   border-radius: 999px;
   background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
   transition: width 0.35s ease;
+}
+
+.progress-sub {
+  margin-top: 8px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 /* Inline text button (used inside help copy) */

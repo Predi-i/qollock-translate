@@ -15,6 +15,7 @@ export interface CatalogRow {
   source: string;
   value: string;
   status: CatalogRowStatus;
+  needsReview: boolean;
   translatorEmail: string | null;
   reviewerEmail: string | null;
   updatedAt: string | null;
@@ -61,6 +62,7 @@ export async function materializeLanguage(
       source,
       value,
       status,
+      needsReview: draft?.needs_review === 1,
       translatorEmail: draft?.translator_email ?? null,
       reviewerEmail: draft?.reviewer_email ?? null,
       updatedAt: draft?.updated_at ?? null,

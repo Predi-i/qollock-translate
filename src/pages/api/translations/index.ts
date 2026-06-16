@@ -10,6 +10,7 @@ interface SaveTranslationBody {
   key?: string;
   value?: string;
   status?: 'translated' | 'reviewed';
+  needsReview?: boolean;
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -24,6 +25,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const key = (body.key ?? '').trim();
   const value = body.value ?? '';
   const status = body.status === 'reviewed' ? 'reviewed' : 'translated';
+  // Approving (reviewed) clears the flag; otherwise trust the client's flag state.
+  const needsReview = status === 'reviewed' ? false : !!body.needsReview;
 
   if (!isLanguageCode(languageCode)) return badRequest('invalid language code');
   if (!key) return badRequest('missing translation key');
@@ -52,6 +55,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     key,
     value,
     status,
+    needsReview,
     translatorEmail: locals.translatorEmail,
   });
 

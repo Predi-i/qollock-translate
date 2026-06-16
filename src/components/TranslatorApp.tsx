@@ -4,6 +4,7 @@ import {
   Check,
   Download,
   ExternalLink,
+  Flag,
   GitPullRequest,
   HelpCircle,
   Languages,
@@ -19,7 +20,7 @@ import {
 import { COMMON_LANGUAGES, flagForCode, sectionForKey, type SectionMeta } from '../lib/languages';
 
 type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
-type Filter = 'open' | 'flagged' | 'done' | 'all';
+type Filter = 'open' | 'flagged' | 'done' | 'review' | 'all';
 type View = 'translations' | 'contributors';
 type ContributorRole = 'translator' | 'reviewer' | 'admin';
 
@@ -35,6 +36,7 @@ interface CatalogRow {
   source: string;
   value: string;
   status: RowStatus;
+  needsReview: boolean;
   translatorEmail: string | null;
   reviewerEmail: string | null;
   updatedAt: string | null;
@@ -86,8 +88,9 @@ const CODE_RE = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
 
 // Plain-language labels. Wire-format status values stay the same.
-function statusMeta(status: RowStatus, flagged: boolean): { label: string; cls: string } {
+function statusMeta(status: RowStatus, flagged: boolean, needsReview: boolean): { label: string; cls: string } {
   if (flagged) return { label: 'Needs fix', cls: 'flagged' };
+  if (needsReview) return { label: 'Review me', cls: 'review' };
   switch (status) {
     case 'missing':
       return { label: 'To do', cls: 'missing' };
@@ -281,7 +284,7 @@ export default function TranslatorApp() {
     }
   }
 
-  const patchRow = useCallback((key: string, value: string, status: RowStatus) => {
+  const patchRow = useCallback((key: string, value: string, status: RowStatus, needsReview: boolean) => {
     setCatalog((prev) => {
       if (!prev) return prev;
       const rows = prev.rows.map((row) => {
@@ -291,6 +294,7 @@ export default function TranslatorApp() {
           ...row,
           value,
           status,
+          needsReview,
           missingPlaceholders: value.trim() ? check.missing : [],
           extraPlaceholders: value.trim() ? check.extra : [],
         };
@@ -303,7 +307,7 @@ export default function TranslatorApp() {
   const commitRow = useCallback(async (
     row: CatalogRow,
     rawValue: string,
-    opts: { review?: boolean; force?: boolean; fromUndo?: boolean } = {}
+    opts: { review?: boolean; force?: boolean; fromUndo?: boolean; needsReview?: boolean } = {}
   ): Promise<boolean> => {
     const key = row.key;
     const value = rawValue;
@@ -311,8 +315,11 @@ export default function TranslatorApp() {
     const review = opts.review ?? wasReviewed;
     const statusChanged = review !== wasReviewed;
     const prior = savedValues.current.get(key) ?? '';
+    // Approving clears the flag; otherwise keep the row's flag unless toggled.
+    const needsReview = value.trim() ? (review ? false : opts.needsReview ?? row.needsReview) : false;
+    const reviewChanged = needsReview !== row.needsReview;
 
-    if (!opts.force && value === savedValues.current.get(key) && !statusChanged) return true;
+    if (!opts.force && value === savedValues.current.get(key) && !statusChanged && !reviewChanged) return true;
 
     if (value.trim()) {
       const check = checkPlaceholders(row.source, value);
@@ -340,6 +347,7 @@ export default function TranslatorApp() {
           key,
           value,
           status: review ? 'reviewed' : 'translated',
+          needsReview,
         }),
       });
       // Record the pre-save value so this change can be undone, unless this save
@@ -350,7 +358,7 @@ export default function TranslatorApp() {
         setUndoDepth(undoStack.current.length);
       }
       savedValues.current.set(key, value);
-      patchRow(key, value, value.trim() ? (review ? 'reviewed' : 'translated') : 'missing');
+      patchRow(key, value, value.trim() ? (review ? 'reviewed' : 'translated') : 'missing', needsReview);
       setSavedKeys((s) => ({ ...s, [key]: true }));
       window.setTimeout(() => setSavedKeys((s) => ({ ...s, [key]: false })), 1400);
       return true;
@@ -415,6 +423,7 @@ export default function TranslatorApp() {
         filter === 'all' ||
         (filter === 'open' && !done) ||
         (filter === 'flagged' && flagged) ||
+        (filter === 'review' && row.needsReview) ||
         (filter === 'done' && done);
       const matchesQuery =
         !needle ||
@@ -514,6 +523,13 @@ export default function TranslatorApp() {
     [commitRow]
   );
 
+  const toggleReview = useCallback(
+    (row: CatalogRow, value: string, needsReview: boolean) => {
+      void commitRow(row, value, { needsReview, force: true });
+    },
+    [commitRow]
+  );
+
   const onRowKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => {
       if (event.nativeEvent.isComposing) return; // let IME (Bengali, CJK, etc.) handle Enter
@@ -542,6 +558,13 @@ export default function TranslatorApp() {
   const completion = catalog?.stats.total
     ? Math.round((catalog.stats.completed / catalog.stats.total) * 100)
     : 0;
+  const reviewCount = catalog?.rows.filter((row) => row.needsReview).length ?? 0;
+
+  // If the review queue empties (last flag cleared), the hidden tab would leave
+  // you staring at an empty list, so fall back to To do.
+  useEffect(() => {
+    if (filter === 'review' && reviewCount === 0) setFilter('open');
+  }, [filter, reviewCount]);
   const exportHref = selectedLanguage ? `/api/export?lang=${encodeURIComponent(selectedLanguage)}` : '#';
   const activeLanguage = languages.find((l) => l.code === selectedLanguage);
   const activeLanguageName = activeLanguage?.name ?? selectedLanguage;
@@ -728,26 +751,17 @@ export default function TranslatorApp() {
                 <div className="progress-track">
                   <div className="progress-fill" style={{ width: `${completion}%` }} />
                 </div>
+                <div className="progress-sub">
+                  {catalog.stats.completed} of {catalog.stats.total} done
+                  {catalog.stats.total - catalog.stats.completed > 0
+                    ? ` · ${catalog.stats.total - catalog.stats.completed} left to do`
+                    : ' · all done 🎉'}
+                  {catalog.stats.reviewed > 0 ? ` · ${catalog.stats.reviewed} checked` : ''}
+                </div>
               </div>
-            ) : null}
-            <div className="stats-grid">
-              <div className="stat">
-                <div className="stat-value">{completion}%</div>
-                <div className="stat-label">Complete</div>
-              </div>
-              <div className="stat">
-                <div className="stat-value">{catalog?.stats.reviewed ?? 0}</div>
-                <div className="stat-label">Checked</div>
-              </div>
-              <div className="stat">
-                <div className="stat-value">{catalog?.stats.completed ?? 0}</div>
-                <div className="stat-label">Done</div>
-              </div>
-              <div className="stat">
-                <div className="stat-value">{catalog?.stats.total ?? 0}</div>
-                <div className="stat-label">Total</div>
-              </div>
-            </div>
+            ) : (
+              <div className="hint">Pick or add a language to see progress.</div>
+            )}
           </div>
 
           <div className="language-list">
@@ -821,7 +835,7 @@ export default function TranslatorApp() {
               ['open', 'To do'],
               ['flagged', 'Needs fix'],
               ['done', 'Done'],
-              ['all', 'All'],
+              ...(reviewCount > 0 ? ([['review', `To review (${reviewCount})`]] as Array<[Filter, string]>) : []),
             ] as Array<[Filter, string]>).map(([value, label]) => (
               <button
                 key={value}
@@ -857,6 +871,7 @@ export default function TranslatorApp() {
                       onKeyDown={onRowKeyDown}
                       onBlur={commitRow}
                       onToggleCheck={toggleCheck}
+                      onToggleReview={toggleReview}
                       onInsertPlaceholder={insertPlaceholder}
                     />
                   ))}
@@ -1018,6 +1033,10 @@ export default function TranslatorApp() {
                   <Check size={15} /> Use the <strong>Check</strong> button to mark a translation you are confident
                   in. The tabs up top let you focus on what is <strong>To do</strong>.
                 </div>
+                <div className="guide-tip">
+                  <Flag size={15} /> Not sure about one? Hit <strong>Review</strong> to flag it. Flagged strings
+                  gather under a <strong>To review</strong> tab so someone can take a second look.
+                </div>
               </div>
             </div>
             <div className="modal-foot">
@@ -1043,6 +1062,7 @@ interface TranslationRowProps {
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => void;
   onBlur: (row: CatalogRow, value: string) => void;
   onToggleCheck: (row: CatalogRow, value: string, reviewed: boolean) => void;
+  onToggleReview: (row: CatalogRow, value: string, needsReview: boolean) => void;
   onInsertPlaceholder: (key: string, name: string) => void;
 }
 
@@ -1060,12 +1080,14 @@ const TranslationRow = memo(function TranslationRow({
   onKeyDown,
   onBlur,
   onToggleCheck,
+  onToggleReview,
   onInsertPlaceholder,
 }: TranslationRowProps) {
   const live = checkPlaceholders(row.source, value);
   const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
   const reviewed = row.status === 'reviewed';
-  const meta = statusMeta(row.status, flagged);
+  const needsReview = row.needsReview;
+  const meta = statusMeta(row.status, flagged, needsReview);
   return (
     <div className={`trow ${flagged ? 'trow-flagged' : ''}`}>
       <div className="trow-en">
@@ -1111,6 +1133,20 @@ const TranslationRow = memo(function TranslationRow({
         </div>
         <div className="trow-foot-right">
           <span className="trow-status">{saving ? 'Saving...' : saved ? 'Saved' : ''}</span>
+          <button
+            type="button"
+            className={`chk chk-flag ${needsReview ? 'on' : ''}`}
+            title={
+              needsReview
+                ? 'Flagged for review. Click to remove the flag.'
+                : 'Flag for someone to review (use when you are not sure)'
+            }
+            disabled={!value.trim() || saving}
+            onClick={() => onToggleReview(row, value, !needsReview)}
+          >
+            <Flag size={14} />
+            {needsReview ? 'Flagged' : 'Review'}
+          </button>
           <button
             type="button"
             className={`chk ${reviewed ? 'on' : ''}`}
