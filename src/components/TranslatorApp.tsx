@@ -1550,22 +1550,34 @@ export default function TranslatorApp() {
               </ol>
               <div className="guide-tips">
                 <div className="guide-tip">
-                  <Undo2 size={15} /> Made a mistake? Press <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the <strong>Undo</strong>{' '}
-                  button) to bring back what you just changed. <kbd>Esc</kbd> clears the box you are in.
+                  <Undo2 size={15} />
+                  <span>
+                    Made a mistake? Press <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the <strong>Undo</strong> button) to bring
+                    back what you just changed. <kbd>Esc</kbd> clears the box you are in.
+                  </span>
                 </div>
                 <div className="guide-tip">
-                  <Check size={15} /> Use the <strong>Check</strong> button to mark a translation you are confident
-                  in. The tabs up top let you focus on what is <strong>To do</strong>.
+                  <Check size={15} />
+                  <span>
+                    Use the <strong>Check</strong> button to mark a translation you are confident in. The tabs up top
+                    let you focus on what is <strong>To do</strong>.
+                  </span>
                 </div>
                 <div className="guide-tip">
-                  <Flag size={15} /> Not sure about one? Hit <strong>Review</strong> to flag it. Flagged strings
-                  gather under a <strong>To review</strong> tab so someone can take a second look.
+                  <Flag size={15} />
+                  <span>
+                    Not sure about one? Hit <strong>Review</strong> to flag it. Flagged strings gather under a{' '}
+                    <strong>To review</strong> tab so someone can take a second look.
+                  </span>
                 </div>
                 <div className="guide-tip">
-                  <BookOpen size={15} /> Press <kbd>Tab</kbd> in any box to open a list of its tags and saved
-                  glossary words. Use <kbd>↑</kbd>/<kbd>↓</kbd> to pick, type to filter, <kbd>Enter</kbd> to insert,{' '}
-                  <kbd>Esc</kbd> to close. Open the <strong>Glossary</strong> to agree on how key words get
-                  translated so everyone stays consistent.
+                  <BookOpen size={15} />
+                  <span>
+                    Press <kbd>Tab</kbd> in any box to open a list of its tags and saved glossary words. Use{' '}
+                    <kbd>↑</kbd>/<kbd>↓</kbd> to pick, type to filter, <kbd>Enter</kbd> to insert, <kbd>Esc</kbd> to
+                    close. Open the <strong>Glossary</strong> to agree on how key words get translated so everyone
+                    stays consistent.
+                  </span>
                 </div>
               </div>
             </div>
