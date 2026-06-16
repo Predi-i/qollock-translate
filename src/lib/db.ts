@@ -46,6 +46,11 @@ export interface TranslationSuggestionRow {
   updated_at: string;
 }
 
+export interface SuggestionWithContributor extends TranslationSuggestionRow {
+  contributor_name: string;
+  contributor_avatar: string | null;
+}
+
 export interface GlossaryTermRow {
   language_code: string;
   source_term: string;
@@ -294,6 +299,99 @@ export async function insertTranslationSuggestion(
     )
     .bind(params.id)
     .first();
+}
+
+export async function listSuggestions(
+  db: D1Database,
+  languageCode: string,
+  status: TranslationSuggestionRow['status'] = 'pending'
+): Promise<SuggestionWithContributor[]> {
+  const result = await db
+    .prepare<SuggestionWithContributor>(
+      `SELECT s.id, s.language_code, s.translation_key, s.source_hash, s.value, s.status,
+              s.contributor_id, s.context_route, s.app_version, s.created_at, s.updated_at,
+              c.display_name AS contributor_name, c.avatar_url AS contributor_avatar
+       FROM translation_suggestions s
+       LEFT JOIN contributors c ON c.id = s.contributor_id
+       WHERE s.language_code = ? AND s.status = ?
+       ORDER BY s.translation_key, s.created_at DESC`
+    )
+    .bind(languageCode, status)
+    .all();
+  return result.results ?? [];
+}
+
+export async function getSuggestion(
+  db: D1Database,
+  id: string
+): Promise<TranslationSuggestionRow | null> {
+  return await db
+    .prepare<TranslationSuggestionRow>(
+      `SELECT id, language_code, translation_key, source_hash, value, status,
+              contributor_id, context_route, app_version, created_at, updated_at
+       FROM translation_suggestions
+       WHERE id = ?`
+    )
+    .bind(id)
+    .first();
+}
+
+// Pull a pending suggestion into the translations table as a normal draft, mark
+// it accepted, and reject any competing pending suggestions for the same string
+// (one winner per key). Returns the accepted suggestion, or null if it was not
+// pending. The caller is responsible for re-validating placeholders first.
+export async function acceptSuggestion(
+  db: D1Database,
+  id: string,
+  reviewerEmail: string
+): Promise<TranslationSuggestionRow | null> {
+  const suggestion = await getSuggestion(db, id);
+  if (!suggestion || suggestion.status !== 'pending') return null;
+
+  const now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO translations (
+           language_code, translation_key, value, status, needs_review, translator_email, reviewer_email, updated_at
+         )
+         VALUES (?, ?, ?, 'translated', 0, ?, NULL, ${now})
+         ON CONFLICT(language_code, translation_key) DO UPDATE SET
+           value = excluded.value,
+           status = 'translated',
+           needs_review = 0,
+           translator_email = excluded.translator_email,
+           reviewer_email = NULL,
+           updated_at = excluded.updated_at`
+      )
+      .bind(suggestion.language_code, suggestion.translation_key, suggestion.value, reviewerEmail),
+    db
+      .prepare(`UPDATE translation_suggestions SET status = 'accepted', updated_at = ${now} WHERE id = ?`)
+      .bind(id),
+    db
+      .prepare(
+        `UPDATE translation_suggestions SET status = 'rejected', updated_at = ${now}
+         WHERE language_code = ? AND translation_key = ? AND status = 'pending' AND id != ?`
+      )
+      .bind(suggestion.language_code, suggestion.translation_key, id),
+  ]);
+
+  return await getSuggestion(db, id);
+}
+
+export async function rejectSuggestion(
+  db: D1Database,
+  id: string
+): Promise<TranslationSuggestionRow | null> {
+  await db
+    .prepare(
+      `UPDATE translation_suggestions
+       SET status = 'rejected', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       WHERE id = ? AND status = 'pending'`
+    )
+    .bind(id)
+    .run();
+  return await getSuggestion(db, id);
 }
 
 export async function countPendingSuggestions(db: D1Database, languageCode: string): Promise<number> {

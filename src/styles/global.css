@@ -223,6 +223,13 @@ textarea:focus-visible {
   padding: 0;
 }
 
+.btn-small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  gap: 6px;
+}
+
 .btn:disabled {
   opacity: 0.52;
   cursor: not-allowed;
@@ -1015,6 +1022,70 @@ kbd {
   color: #fdba74;
   font-weight: 600;
   margin-right: 6px;
+}
+
+/* In-app suggestions surfaced above the translation box */
+.trow-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.suggestion-card {
+  border: 1px solid color-mix(in srgb, var(--color-accent-2) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent-2) 8%, var(--color-panel-2));
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.suggestion-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.suggestion-from {
+  font-weight: 650;
+  color: #c8fff6;
+}
+
+.suggestion-where {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  opacity: 0.8;
+}
+
+.suggestion-stale {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning);
+  font-weight: 650;
+}
+
+.suggestion-value {
+  font-size: 13px;
+  color: var(--color-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.suggestion-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-danger);
+}
+
+.suggestion-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .trow-input-wrap {

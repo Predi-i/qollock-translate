@@ -24,7 +24,7 @@ import { isLockedGlossaryTerm, lockedGlossaryNote, SHORT_GLOSSARY_TERMS } from '
 import { COMMON_LANGUAGES, flagForCode, sectionForKey, type SectionMeta } from '../lib/languages';
 
 type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
-type Filter = 'open' | 'flagged' | 'done' | 'review' | 'all';
+type Filter = 'open' | 'flagged' | 'done' | 'review' | 'suggested' | 'all';
 type View = 'translations' | 'contributors';
 type ContributorRole = 'translator' | 'reviewer' | 'admin';
 type GlossaryFilter = 'missing' | 'saved' | 'all';
@@ -74,6 +74,22 @@ interface Contributor {
   pending_suggestion_count: number;
 }
 
+// A pending translation suggested from inside the Grimoire client. `stale` means
+// the English source changed since it was suggested, so it may no longer fit.
+interface Suggestion {
+  id: string;
+  key: string;
+  value: string;
+  source: string | null;
+  currentValue: string;
+  stale: boolean;
+  contributorName: string;
+  contributorAvatar: string | null;
+  contextRoute: string | null;
+  appVersion: string | null;
+  createdAt: string;
+}
+
 interface GlossaryTerm {
   sourceTerm: string;
   targetTerm: string;
@@ -120,6 +136,7 @@ const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 const CODE_RE = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
 const EMPTY_GLOSSARY_MATCHES: GlossaryTerm[] = [];
+const EMPTY_SUGGESTIONS: Suggestion[] = [];
 const PRIORITY_GLOSSARY_TERMS = [
   'Grimoire',
   'Deadlock',
@@ -342,6 +359,7 @@ export default function TranslatorApp() {
   const [languages, setLanguages] = useState<Language[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState('');
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('open');
@@ -470,10 +488,28 @@ export default function TranslatorApp() {
       setUndoDepth(0);
       setRowErrors({});
       setSavedKeys({});
+      void loadSuggestions(languageCode);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy('');
+    }
+  }
+
+  async function loadSuggestions(languageCode = selectedLanguage) {
+    if (!languageCode) {
+      setSuggestions([]);
+      return;
+    }
+    try {
+      const result = await fetchJson<{ suggestions: Suggestion[] }>(
+        `/api/suggestions?lang=${encodeURIComponent(languageCode)}`
+      );
+      if (selectedLanguageRef.current !== languageCode) return;
+      setSuggestions(result.suggestions);
+    } catch {
+      // Suggestions are a side panel, not the main flow; a failure here should
+      // not block translating. Leave whatever we had and stay quiet.
     }
   }
 
@@ -574,6 +610,44 @@ export default function TranslatorApp() {
       });
       return { ...prev, rows, stats: computeStats(rows) };
     });
+  }, []);
+
+  // Accept a player's suggestion: it becomes the saved translation, and the row
+  // updates in place. Returns an error string if the server rejected it (e.g. the
+  // English changed and placeholders no longer match). Resolves to null on success.
+  const acceptSuggestion = useCallback(async (suggestion: Suggestion): Promise<string | null> => {
+    try {
+      await fetchJson(`/api/suggestions/${encodeURIComponent(suggestion.id)}`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'accept' }),
+      });
+    } catch (err) {
+      return (err as Error).message;
+    }
+    const key = suggestion.key;
+    const value = suggestion.value;
+    setDrafts((d) => ({ ...d, [key]: value }));
+    savedValues.current.set(key, value);
+    patchRow(key, value, 'translated', false);
+    // The server accepts one suggestion per string and rejects the rest, so drop
+    // every pending suggestion for this key from the list.
+    setSuggestions((prev) => prev.filter((s) => s.key !== key));
+    setSavedKeys((s) => ({ ...s, [key]: true }));
+    window.setTimeout(() => setSavedKeys((s) => ({ ...s, [key]: false })), 1400);
+    return null;
+  }, [patchRow]);
+
+  const rejectSuggestion = useCallback(async (suggestion: Suggestion): Promise<string | null> => {
+    try {
+      await fetchJson(`/api/suggestions/${encodeURIComponent(suggestion.id)}`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'reject' }),
+      });
+    } catch (err) {
+      return (err as Error).message;
+    }
+    setSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id));
+    return null;
   }, []);
 
   // Save a single row. Returns true if it saved (or was a no-op), false if blocked.
@@ -687,6 +761,16 @@ export default function TranslatorApp() {
   // Filter on the SAVED value, not the live draft, so a row never disappears
   // out from under the cursor as soon as the translator starts typing. It moves
   // between tabs only after a save (Enter / blur).
+  const suggestionsByKey = useMemo(() => {
+    const map = new Map<string, Suggestion[]>();
+    for (const s of suggestions) {
+      const list = map.get(s.key);
+      if (list) list.push(s);
+      else map.set(s.key, [s]);
+    }
+    return map;
+  }, [suggestions]);
+
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return (catalog?.rows ?? []).filter((row) => {
@@ -697,6 +781,7 @@ export default function TranslatorApp() {
         (filter === 'open' && !done) ||
         (filter === 'flagged' && flagged) ||
         (filter === 'review' && row.needsReview) ||
+        (filter === 'suggested' && suggestionsByKey.has(row.key)) ||
         (filter === 'done' && done);
       const matchesQuery =
         !needle ||
@@ -705,7 +790,7 @@ export default function TranslatorApp() {
         row.value.toLowerCase().includes(needle);
       return matchesFilter && matchesQuery;
     });
-  }, [catalog, filter, query]);
+  }, [catalog, filter, query, suggestionsByKey]);
 
   const orderedKeys = useMemo(() => filteredRows.map((row) => row.key), [filteredRows]);
   orderedKeysRef.current = orderedKeys;
@@ -950,12 +1035,19 @@ export default function TranslatorApp() {
     ? Math.round((catalog.stats.completed / catalog.stats.total) * 100)
     : 0;
   const reviewCount = catalog?.rows.filter((row) => row.needsReview).length ?? 0;
+  const suggestionCount = suggestionsByKey.size;
 
   // If the review queue empties (last flag cleared), the hidden tab would leave
   // you staring at an empty list, so fall back to To do.
   useEffect(() => {
     if (filter === 'review' && reviewCount === 0) setFilter('open');
   }, [filter, reviewCount]);
+
+  // Same guard for the suggestions tab: once you have triaged the last one, the
+  // tab disappears, so step back to To do rather than an empty list.
+  useEffect(() => {
+    if (filter === 'suggested' && suggestionCount === 0) setFilter('open');
+  }, [filter, suggestionCount]);
   const exportHref = selectedLanguage ? `/api/export?lang=${encodeURIComponent(selectedLanguage)}` : '#';
   const activeLanguage = languages.find((l) => l.code === selectedLanguage);
   const activeLanguageName = activeLanguage?.name ?? selectedLanguage;
@@ -1238,6 +1330,7 @@ export default function TranslatorApp() {
               ['flagged', 'Needs fix'],
               ['done', 'Done'],
               ...(reviewCount > 0 ? ([['review', `To review (${reviewCount})`]] as Array<[Filter, string]>) : []),
+              ...(suggestionCount > 0 ? ([['suggested', `Suggestions (${suggestionCount})`]] as Array<[Filter, string]>) : []),
             ] as Array<[Filter, string]>).map(([value, label]) => (
               <button
                 key={value}
@@ -1270,6 +1363,9 @@ export default function TranslatorApp() {
                       error={rowErrors[row.key]}
                       activeLanguageName={activeLanguageName}
                       glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
+                      suggestions={suggestionsByKey.get(row.key) ?? EMPTY_SUGGESTIONS}
+                      onAcceptSuggestion={acceptSuggestion}
+                      onRejectSuggestion={rejectSuggestion}
                       onChange={handleChange}
                       onKeyDown={onRowKeyDown}
                       onBlur={commitRow}
@@ -1485,6 +1581,81 @@ export default function TranslatorApp() {
   );
 }
 
+// A single in-app suggestion, shown above the translation box. "Use this" pulls
+// it into the saved value; "Dismiss" discards it. Holds its own busy/error state
+// so accepting one card never re-renders the rest of the catalog.
+function SuggestionCard({
+  suggestion,
+  onAccept,
+  onReject,
+}: {
+  suggestion: Suggestion;
+  onAccept: (suggestion: Suggestion) => Promise<string | null>;
+  onReject: (suggestion: Suggestion) => Promise<string | null>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const act = async (fn: (s: Suggestion) => Promise<string | null>) => {
+    setBusy(true);
+    setError('');
+    const message = await fn(suggestion);
+    // On success the card unmounts (the parent drops it), so only a failure path
+    // needs to restore the buttons.
+    if (message) {
+      setError(message);
+      setBusy(false);
+    }
+  };
+
+  const where = [suggestion.contextRoute, suggestion.appVersion ? `v${suggestion.appVersion}` : null]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div className="suggestion-card">
+      <div className="suggestion-head">
+        <Lightbulb size={13} />
+        <span className="suggestion-from">
+          Suggested by {suggestion.contributorName || 'a player'}
+        </span>
+        {where ? <span className="suggestion-where">{where}</span> : null}
+        {suggestion.stale ? (
+          <span className="suggestion-stale" title="The English text changed since this was suggested.">
+            <AlertTriangle size={12} /> source changed
+          </span>
+        ) : null}
+      </div>
+      <div className="suggestion-value" dir="auto">
+        {suggestion.value}
+      </div>
+      {error ? (
+        <div className="suggestion-error">
+          <AlertTriangle size={12} /> {error}
+        </div>
+      ) : null}
+      <div className="suggestion-actions">
+        <button
+          type="button"
+          className="btn btn-small btn-primary"
+          disabled={busy}
+          onClick={() => void act(onAccept)}
+        >
+          <Check size={13} /> Use this
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
+          disabled={busy}
+          onClick={() => void act(onReject)}
+        >
+          <X size={13} /> Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface TranslationRowProps {
   row: CatalogRow;
   value: string;
@@ -1493,6 +1664,9 @@ interface TranslationRowProps {
   error?: string;
   activeLanguageName: string;
   glossaryMatches: GlossaryTerm[];
+  suggestions: Suggestion[];
+  onAcceptSuggestion: (suggestion: Suggestion) => Promise<string | null>;
+  onRejectSuggestion: (suggestion: Suggestion) => Promise<string | null>;
   onChange: (key: string, value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => void;
   onBlur: (row: CatalogRow, value: string) => void;
@@ -1513,6 +1687,9 @@ const TranslationRow = memo(function TranslationRow({
   error,
   activeLanguageName,
   glossaryMatches,
+  suggestions,
+  onAcceptSuggestion,
+  onRejectSuggestion,
   onChange,
   onKeyDown,
   onBlur,
@@ -1603,6 +1780,18 @@ const TranslationRow = memo(function TranslationRow({
         <span className="trow-en-text">{row.source}</span>
         <span className={`badge ${meta.cls}`}>{meta.label}</span>
       </div>
+      {suggestions.length > 0 ? (
+        <div className="trow-suggestions">
+          {suggestions.map((suggestion) => (
+            <SuggestionCard
+              key={suggestion.id}
+              suggestion={suggestion}
+              onAccept={onAcceptSuggestion}
+              onReject={onRejectSuggestion}
+            />
+          ))}
+        </div>
+      ) : null}
       {row.placeholders.length > 0 ? (
         <div className="trow-ph">
           <span className="trow-ph-label">Keep these (click, or press Tab):</span>
