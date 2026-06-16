@@ -135,6 +135,7 @@ interface UndoEntry {
 const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 const CODE_RE = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
+const GLOSSARY_OPEN_KEY = 'gt.glossaryOpen.v1';
 const EMPTY_GLOSSARY_MATCHES: GlossaryTerm[] = [];
 const EMPTY_SUGGESTIONS: Suggestion[] = [];
 const PRIORITY_GLOSSARY_TERMS = [
@@ -408,9 +409,28 @@ export default function TranslatorApp() {
       // localStorage may be unavailable; skip the first-run tutorial.
     }
     try {
-      setGlossaryOpen(window.matchMedia('(min-width: 1121px)').matches);
+      // Remember the translator's last choice so the panel does not silently
+      // re-collapse on every visit. First-timers default to open on wide
+      // screens; on narrower ones it stays behind the button + nudge.
+      const stored = localStorage.getItem(GLOSSARY_OPEN_KEY);
+      if (stored === '1' || stored === '0') {
+        setGlossaryOpen(stored === '1');
+      } else {
+        setGlossaryOpen(window.matchMedia('(min-width: 1121px)').matches);
+      }
     } catch {
-      // matchMedia may be unavailable in tests; keep the glossary behind the button.
+      // matchMedia/localStorage may be unavailable in tests; keep it behind the button.
+    }
+  }, []);
+
+  // Single entry point for showing/hiding the glossary so every toggle (toolbar
+  // button, panel close, empty-state nudge) persists the same preference.
+  const setGlossaryVisible = useCallback((next: boolean) => {
+    setGlossaryOpen(next);
+    try {
+      localStorage.setItem(GLOSSARY_OPEN_KEY, next ? '1' : '0');
+    } catch {
+      // localStorage may be unavailable; the in-memory state still updates.
     }
   }, []);
 
@@ -1078,10 +1098,11 @@ export default function TranslatorApp() {
               className={`btn ${glossaryOpen ? 'btn-secondary' : ''}`}
               type="button"
               title="Open or close the glossary helper"
-              onClick={() => setGlossaryOpen((open) => !open)}
+              onClick={() => setGlossaryVisible(!glossaryOpen)}
             >
               <BookOpen size={16} />
               Glossary
+              {savedGlossaryCount > 0 ? <span className="btn-badge">{savedGlossaryCount}</span> : null}
             </button>
           ) : null}
           {view === 'translations' ? (
@@ -1324,6 +1345,16 @@ export default function TranslatorApp() {
             ) : null}
           </div>
 
+          {catalog && savedGlossaryCount === 0 && !glossaryOpen ? (
+            <button type="button" className="glossary-nudge" onClick={() => setGlossaryVisible(true)}>
+              <BookOpen size={16} />
+              <span>
+                <strong>Set up a glossary</strong> to keep key words translated the same way everywhere. Open it to get
+                started.
+              </span>
+            </button>
+          ) : null}
+
           <div className="segmented" role="tablist" aria-label="String filters">
             {([
               ['open', 'To do'],
@@ -1393,7 +1424,7 @@ export default function TranslatorApp() {
             savedCount={savedGlossaryCount}
             saving={savingGlossary}
             saved={savedGlossary}
-            onClose={() => setGlossaryOpen(false)}
+            onClose={() => setGlossaryVisible(false)}
             onFilterChange={(next) => {
               setGlossaryFilter(next);
               setPinnedGlossary({});

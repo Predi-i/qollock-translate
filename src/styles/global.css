@@ -689,6 +689,51 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
+/* Count pill shown inside toolbar buttons (e.g. Glossary saved-term count). */
+.btn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-accent);
+  color: #1a1205;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Empty-state prompt that points new translators at the glossary panel. */
+.glossary-nudge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-panel));
+  color: var(--color-fg);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.glossary-nudge:hover {
+  background: color-mix(in srgb, var(--color-accent) 20%, var(--color-panel));
+  border-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-border));
+}
+
+.glossary-nudge svg {
+  flex-shrink: 0;
+  color: var(--color-accent);
+}
+
 .hint {
   color: var(--color-muted);
   font-size: 12px;
