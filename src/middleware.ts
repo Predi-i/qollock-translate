@@ -3,6 +3,11 @@ import { env } from 'cloudflare:workers';
 import { verifyAccessJwt } from './lib/access';
 
 export const onRequest = defineMiddleware(async (ctx, next) => {
+  const url = new URL(ctx.request.url);
+  if (url.pathname.startsWith('/api/live/')) {
+    return next();
+  }
+
   if (import.meta.env.DEV) {
     ctx.locals.translatorEmail = env.TRANSLATOR_EMAIL || 'local-dev@grimoire';
     return next();

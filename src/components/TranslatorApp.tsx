@@ -1,20 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
   Download,
   ExternalLink,
   GitPullRequest,
+  HelpCircle,
   Languages,
+  Lightbulb,
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
+  Undo2,
+  Users,
   X,
 } from 'lucide-react';
 import { COMMON_LANGUAGES, flagForCode, sectionForKey, type SectionMeta } from '../lib/languages';
 
 type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
 type Filter = 'open' | 'flagged' | 'done' | 'all';
+type View = 'translations' | 'contributors';
+type ContributorRole = 'translator' | 'reviewer' | 'admin';
 
 interface Language {
   code: string;
@@ -47,13 +54,36 @@ interface PullResponse {
   pullRequest: { url: string; number: number; branch: string; updatedExisting: boolean };
 }
 
+interface Contributor {
+  id: string;
+  display_name: string;
+  avatar_url: string | null;
+  role: ContributorRole;
+  trust_level: number;
+  banned_at: string | null;
+  created_at: string;
+  last_seen_at: string;
+  suggestion_count: number;
+  pending_suggestion_count: number;
+}
+
 interface RowGroup {
   section: SectionMeta;
   rows: CatalogRow[];
 }
 
+// One step on the undo stack: the value/state a key held *before* the last save,
+// so Ctrl+Z (or the Undo button) can put it back.
+interface UndoEntry {
+  key: string;
+  value: string;
+  reviewed: boolean;
+  label: string;
+}
+
 const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 const CODE_RE = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
+const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
 
 // Plain-language labels. Wire-format status values stay the same.
 function statusMeta(status: RowStatus, flagged: boolean): { label: string; cls: string } {
@@ -80,10 +110,12 @@ function computeStats(rows: CatalogRow[]): CatalogResponse['stats'] {
 }
 
 export default function TranslatorApp() {
+  const [view, setView] = useState<View>('translations');
   const [email, setEmail] = useState('');
   const [languages, setLanguages] = useState<Language[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState('');
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+  const [contributors, setContributors] = useState<Contributor[]>([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('open');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -95,16 +127,67 @@ export default function TranslatorApp() {
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
+  const [undoDepth, setUndoDepth] = useState(0);
 
   const savedValues = useRef<Map<string, string>>(new Map());
+  // Undo history of saved values. We keep refs in sync so the global key
+  // handler (bound once) always sees the latest catalog and save function.
+  const undoStack = useRef<UndoEntry[]>([]);
+  const catalogRef = useRef<CatalogResponse | null>(null);
+  const performUndoRef = useRef<() => void>(() => {});
+  // Refs let the memoized row callbacks stay referentially stable (so typing in
+  // one box never re-renders the other ~60 rows) while still reading fresh state.
+  const selectedLanguageRef = useRef(selectedLanguage);
+  const orderedKeysRef = useRef<string[]>([]);
+  catalogRef.current = catalog;
+  selectedLanguageRef.current = selectedLanguage;
 
   useEffect(() => {
     void bootstrap();
+    try {
+      if (!localStorage.getItem(TUTORIAL_SEEN_KEY)) setShowHelp(true);
+    } catch {
+      // localStorage may be unavailable; skip the first-run tutorial.
+    }
   }, []);
+
+  // Global Ctrl/Cmd+Z. While you are actively editing a row (its box differs
+  // from the last save), the browser's native text-undo wins. Otherwise we undo
+  // the most recent *saved* change so a translator can recover an overwrite.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const isUndo = (event.key === 'z' || event.key === 'Z') && (event.metaKey || event.ctrlKey) && !event.shiftKey;
+      if (!isUndo) return;
+      const active = document.activeElement;
+      if (active instanceof HTMLTextAreaElement && active.id.startsWith('tx-')) {
+        const key = active.id.slice(3);
+        if (active.value !== (savedValues.current.get(key) ?? '')) return; // let native undo run
+      }
+      if (undoStack.current.length === 0) return;
+      event.preventDefault();
+      performUndoRef.current();
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  function dismissTutorial() {
+    setShowHelp(false);
+    try {
+      localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
+    } catch {
+      // Ignore storage failures; the tutorial just reopens next visit.
+    }
+  }
 
   useEffect(() => {
     if (selectedLanguage) void loadCatalog(selectedLanguage);
   }, [selectedLanguage]);
+
+  useEffect(() => {
+    if (view === 'contributors') void loadContributors();
+  }, [view]);
 
   async function bootstrap() {
     setError('');
@@ -132,8 +215,44 @@ export default function TranslatorApp() {
       setLanguages(next.languages);
       setDrafts(Object.fromEntries(next.rows.map((row) => [row.key, row.value])));
       savedValues.current = new Map(next.rows.map((row) => [row.key, row.value]));
+      undoStack.current = [];
+      setUndoDepth(0);
       setRowErrors({});
       setSavedKeys({});
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function loadContributors() {
+    setBusy('contributors');
+    setError('');
+    try {
+      const result = await fetchJson<{ contributors: Contributor[] }>('/api/contributors');
+      setContributors(result.contributors);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function updateContributorRole(id: string, role: ContributorRole) {
+    setBusy(`contributor:${id}`);
+    setError('');
+    try {
+      const result = await fetchJson<{ contributor: Contributor }>(`/api/contributors/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      });
+      setContributors((prev) =>
+        prev.map((contributor) =>
+          contributor.id === id ? { ...contributor, role: result.contributor.role } : contributor
+        )
+      );
+      setMessage(`Updated ${result.contributor.display_name}`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -162,7 +281,7 @@ export default function TranslatorApp() {
     }
   }
 
-  function patchRow(key: string, value: string, status: RowStatus) {
+  const patchRow = useCallback((key: string, value: string, status: RowStatus) => {
     setCatalog((prev) => {
       if (!prev) return prev;
       const rows = prev.rows.map((row) => {
@@ -178,15 +297,20 @@ export default function TranslatorApp() {
       });
       return { ...prev, rows, stats: computeStats(rows) };
     });
-  }
+  }, []);
 
   // Save a single row. Returns true if it saved (or was a no-op), false if blocked.
-  async function commitRow(row: CatalogRow, rawValue: string, opts: { review?: boolean; force?: boolean } = {}) {
+  const commitRow = useCallback(async (
+    row: CatalogRow,
+    rawValue: string,
+    opts: { review?: boolean; force?: boolean; fromUndo?: boolean } = {}
+  ): Promise<boolean> => {
     const key = row.key;
     const value = rawValue;
     const wasReviewed = row.status === 'reviewed';
     const review = opts.review ?? wasReviewed;
     const statusChanged = review !== wasReviewed;
+    const prior = savedValues.current.get(key) ?? '';
 
     if (!opts.force && value === savedValues.current.get(key) && !statusChanged) return true;
 
@@ -212,12 +336,19 @@ export default function TranslatorApp() {
       await fetchJson('/api/translations', {
         method: 'POST',
         body: JSON.stringify({
-          languageCode: selectedLanguage,
+          languageCode: selectedLanguageRef.current,
           key,
           value,
           status: review ? 'reviewed' : 'translated',
         }),
       });
+      // Record the pre-save value so this change can be undone, unless this save
+      // *is* an undo (otherwise Ctrl+Z would just bounce between two values).
+      if (!opts.fromUndo && prior !== value) {
+        undoStack.current.push({ key, value: prior, reviewed: wasReviewed, label: row.source });
+        if (undoStack.current.length > 100) undoStack.current.shift();
+        setUndoDepth(undoStack.current.length);
+      }
       savedValues.current.set(key, value);
       patchRow(key, value, value.trim() ? (review ? 'reviewed' : 'translated') : 'missing');
       setSavedKeys((s) => ({ ...s, [key]: true }));
@@ -229,7 +360,29 @@ export default function TranslatorApp() {
     } finally {
       setSavingKeys((s) => ({ ...s, [key]: false }));
     }
-  }
+  }, [patchRow]);
+
+  // Pop the last saved change and restore the previous value, re-saving it so
+  // the server and the UI agree. Bound to Ctrl/Cmd+Z and the Undo button.
+  const performUndo = useCallback(() => {
+    const entry = undoStack.current.pop();
+    setUndoDepth(undoStack.current.length);
+    if (!entry) return;
+    const row = catalogRef.current?.rows.find((r) => r.key === entry.key);
+    if (!row) return;
+    setDrafts((d) => ({ ...d, [entry.key]: entry.value }));
+    void commitRow(row, entry.value, { review: entry.reviewed, force: true, fromUndo: true }).then((ok) => {
+      if (ok) {
+        focusKey(entry.key);
+        setError('');
+        const short = entry.label.length > 42 ? `${entry.label.slice(0, 42)}…` : entry.label;
+        setMessage(`Reverted "${short}"`);
+      }
+    });
+    // commitRow / focusKey are stable enough for this handler; refs cover the rest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  performUndoRef.current = performUndo;
 
   async function createPullRequest() {
     if (!selectedLanguage) return;
@@ -273,6 +426,7 @@ export default function TranslatorApp() {
   }, [catalog, filter, query]);
 
   const orderedKeys = useMemo(() => filteredRows.map((row) => row.key), [filteredRows]);
+  orderedKeysRef.current = orderedKeys;
 
   const groups = useMemo<RowGroup[]>(() => {
     const out: RowGroup[] = [];
@@ -309,6 +463,30 @@ export default function TranslatorApp() {
     return { code: raw, name: displayName(raw), flag: flagForCode(raw) };
   }, [pickerQuery, languages]);
 
+  // Click a {{placeholder}} chip to drop it into that row's box at the cursor
+  // (or append it), so translators never have to retype the braces by hand.
+  const insertPlaceholder = useCallback((key: string, name: string) => {
+    const token = `{{${name}}}`;
+    const el = document.getElementById(`tx-${key}`) as HTMLTextAreaElement | null;
+    if (!el) {
+      setDrafts((d) => {
+        const cur = d[key] ?? '';
+        return { ...d, [key]: cur && !cur.endsWith(' ') ? `${cur} ${token}` : `${cur}${token}` };
+      });
+      return;
+    }
+    const cur = el.value;
+    const start = el.selectionStart ?? cur.length;
+    const end = el.selectionEnd ?? cur.length;
+    const next = cur.slice(0, start) + token + cur.slice(end);
+    const caret = start + token.length;
+    setDrafts((d) => ({ ...d, [key]: next }));
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  }, []);
+
   function focusKey(key: string | undefined) {
     if (!key) return;
     const el = document.getElementById(`tx-${key}`) as HTMLTextAreaElement | null;
@@ -318,33 +496,48 @@ export default function TranslatorApp() {
     }
   }
 
-  function moveFocus(currentKey: string, dir: 1 | -1) {
-    const idx = orderedKeys.indexOf(currentKey);
+  const moveFocus = useCallback((currentKey: string, dir: 1 | -1) => {
+    const keys = orderedKeysRef.current;
+    const idx = keys.indexOf(currentKey);
     if (idx === -1) return;
-    focusKey(orderedKeys[idx + dir]);
-  }
+    focusKey(keys[idx + dir]);
+  }, []);
 
-  function onRowKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) {
-    if (event.nativeEvent.isComposing) return; // let IME (Bengali, CJK, etc.) handle Enter
-    const el = event.currentTarget;
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      void commitRow(row, el.value).then((ok) => {
-        if (ok) moveFocus(row.key, 1);
-      });
-    } else if (event.key === 'ArrowDown' && el.selectionStart === el.value.length && el.selectionStart === el.selectionEnd) {
-      event.preventDefault();
-      moveFocus(row.key, 1);
-    } else if (event.key === 'ArrowUp' && el.selectionStart === 0 && el.selectionStart === el.selectionEnd) {
-      event.preventDefault();
-      moveFocus(row.key, -1);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      const reset = savedValues.current.get(row.key) ?? '';
-      setDrafts((d) => ({ ...d, [row.key]: reset }));
-      el.blur();
-    }
-  }
+  const handleChange = useCallback((key: string, value: string) => {
+    setDrafts((d) => ({ ...d, [key]: value }));
+  }, []);
+
+  const toggleCheck = useCallback(
+    (row: CatalogRow, value: string, reviewed: boolean) => {
+      void commitRow(row, value, { review: !reviewed, force: true });
+    },
+    [commitRow]
+  );
+
+  const onRowKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => {
+      if (event.nativeEvent.isComposing) return; // let IME (Bengali, CJK, etc.) handle Enter
+      const el = event.currentTarget;
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        void commitRow(row, el.value).then((ok) => {
+          if (ok) moveFocus(row.key, 1);
+        });
+      } else if (event.key === 'ArrowDown' && el.selectionStart === el.value.length && el.selectionStart === el.selectionEnd) {
+        event.preventDefault();
+        moveFocus(row.key, 1);
+      } else if (event.key === 'ArrowUp' && el.selectionStart === 0 && el.selectionStart === el.selectionEnd) {
+        event.preventDefault();
+        moveFocus(row.key, -1);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        const reset = savedValues.current.get(row.key) ?? '';
+        setDrafts((d) => ({ ...d, [row.key]: reset }));
+        el.blur();
+      }
+    },
+    [commitRow, moveFocus]
+  );
 
   const completion = catalog?.stats.total
     ? Math.round((catalog.stats.completed / catalog.stats.total) * 100)
@@ -368,99 +561,175 @@ export default function TranslatorApp() {
           <button
             className="btn"
             type="button"
+            title="How this works (open the guide)"
+            onClick={() => setShowHelp(true)}
+          >
+            <HelpCircle size={16} />
+            Help
+          </button>
+          {view === 'translations' ? (
+            <button
+              className="btn"
+              type="button"
+              title="Undo the last saved change (Ctrl+Z)"
+              disabled={undoDepth === 0}
+              onClick={() => performUndo()}
+            >
+              <Undo2 size={16} />
+              Undo
+            </button>
+          ) : null}
+          <button
+            className="btn"
+            type="button"
             title="Reload the latest strings"
-            disabled={!!busy || !selectedLanguage}
-            onClick={() => void loadCatalog()}
+            disabled={!!busy || (view === 'translations' && !selectedLanguage)}
+            onClick={() => (view === 'contributors' ? void loadContributors() : void loadCatalog())}
           >
             <RefreshCw size={16} />
             Refresh
           </button>
-          <a className="btn btn-secondary" href={exportHref} title="Download this language as a file">
-            <Download size={16} />
-            Download
-          </a>
           <button
-            className="btn btn-primary"
+            className={`btn ${view === 'contributors' ? 'btn-secondary' : ''}`}
             type="button"
-            title="Send your translations to the developer for review"
-            disabled={!!busy || !selectedLanguage || !catalog?.stats.completed}
-            onClick={() => void createPullRequest()}
+            title="Manage Steam-authenticated translation contributors"
+            onClick={() => setView(view === 'contributors' ? 'translations' : 'contributors')}
           >
-            <GitPullRequest size={16} />
-            Submit translations
+            <Users size={16} />
+            {view === 'contributors' ? 'Translations' : 'Contributors'}
           </button>
+          {view === 'translations' ? (
+            <>
+              <a className="btn btn-secondary" href={exportHref} title="Download this language as a file">
+                <Download size={16} />
+                Download
+              </a>
+              <button
+                className="btn btn-primary"
+                type="button"
+                title="Send your translations to the developer for review"
+                disabled={!!busy || !selectedLanguage || !catalog?.stats.completed}
+                onClick={() => void createPullRequest()}
+              >
+                <GitPullRequest size={16} />
+                Submit translations
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
 
-      <main className="workspace workspace--inline">
+      {view === 'contributors' ? (
+        <main className="admin-workspace">
+          <section className="admin-pane">
+            <div className="section">
+              <div className="admin-head">
+                <div>
+                  <div className="section-title">Contributors</div>
+                  <div className="admin-subtitle">
+                    Steam users appear here after they enter Translation Mode in Grimoire.
+                  </div>
+                </div>
+                <button className="btn" type="button" disabled={!!busy} onClick={() => void loadContributors()}>
+                  <RefreshCw size={16} />
+                  Refresh
+                </button>
+              </div>
+              {error ? (
+                <div className="banner banner-error">
+                  <span>{error}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="contributor-list">
+              {contributors.length === 0 ? (
+                <div className="empty">No Steam contributors yet.</div>
+              ) : (
+                contributors.map((contributor) => (
+                  <div className="contributor-row" key={contributor.id}>
+                    <div className="contributor-main">
+                      {contributor.avatar_url ? (
+                        <img className="contributor-avatar" src={contributor.avatar_url} alt="" />
+                      ) : (
+                        <div className="contributor-avatar contributor-avatar--empty">
+                          <Users size={18} />
+                        </div>
+                      )}
+                      <div className="contributor-ident">
+                        <div className="contributor-name">
+                          {contributor.display_name}
+                          {contributor.role === 'admin' || contributor.role === 'reviewer' ? (
+                            <span className={`role-pill ${contributor.role}`}>
+                              <ShieldCheck size={12} />
+                              {contributor.role}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="contributor-meta">
+                          <span>{contributor.id}</span>
+                          <span>Last seen {formatDate(contributor.last_seen_at)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="contributor-stats">
+                      <div>
+                        <span className="contributor-stat-value">{contributor.suggestion_count}</span>
+                        <span className="contributor-stat-label">suggestions</span>
+                      </div>
+                      <div>
+                        <span className="contributor-stat-value">{contributor.pending_suggestion_count}</span>
+                        <span className="contributor-stat-label">pending</span>
+                      </div>
+                    </div>
+                    <select
+                      className="select contributor-role"
+                      value={contributor.role}
+                      disabled={busy === `contributor:${contributor.id}`}
+                      onChange={(event) =>
+                        void updateContributorRole(contributor.id, event.target.value as ContributorRole)
+                      }
+                    >
+                      <option value="translator">Translator</option>
+                      <option value="reviewer">Reviewer</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </main>
+      ) : (
+        <main className="workspace workspace--inline">
         <aside className="rail">
           <div className="section">
             <div className="section-title">Languages</div>
-            {!pickerOpen ? (
-              <button className="btn btn-primary add-lang-btn" type="button" onClick={() => setPickerOpen(true)}>
-                <Plus size={16} />
-                Add a language
-              </button>
-            ) : (
-              <div className="picker">
-                <div className="picker-search">
-                  <Search size={15} />
-                  <input
-                    className="picker-input"
-                    autoFocus
-                    placeholder="Search, e.g. Spanish or es"
-                    value={pickerQuery}
-                    onChange={(event) => setPickerQuery(event.target.value)}
-                  />
-                  <button
-                    className="picker-x"
-                    type="button"
-                    title="Close"
-                    onClick={() => {
-                      setPickerOpen(false);
-                      setPickerQuery('');
-                    }}
-                  >
-                    <X size={15} />
-                  </button>
-                </div>
-                <div className="picker-list">
-                  {pickerOptions.map((lang) => (
-                    <button
-                      key={lang.code}
-                      className="picker-option"
-                      type="button"
-                      disabled={busy === 'add-language'}
-                      onClick={() => void addLanguageByCode(lang.code, lang.name)}
-                    >
-                      <span className="lang-flag">{lang.flag}</span>
-                      <span className="picker-name">{lang.name}</span>
-                      <span className="picker-native">{lang.native}</span>
-                      <span className="picker-code">{lang.code}</span>
-                    </button>
-                  ))}
-                  {customOption ? (
-                    <button
-                      className="picker-option"
-                      type="button"
-                      disabled={busy === 'add-language'}
-                      onClick={() => void addLanguageByCode(customOption.code, customOption.name)}
-                    >
-                      <span className="lang-flag">{customOption.flag}</span>
-                      <span className="picker-name">Add {customOption.name}</span>
-                      <span className="picker-native">custom code</span>
-                      <span className="picker-code">{customOption.code}</span>
-                    </button>
-                  ) : null}
-                  {pickerOptions.length === 0 && !customOption ? (
-                    <div className="empty">No match. Type a language code like pt-BR.</div>
-                  ) : null}
-                </div>
-              </div>
-            )}
+            <button
+              className="btn btn-primary add-lang-btn"
+              type="button"
+              onClick={() => {
+                setPickerQuery('');
+                setPickerOpen(true);
+              }}
+            >
+              <Plus size={16} />
+              Add a language
+            </button>
           </div>
 
           <div className="section">
+            {catalog ? (
+              <div className="progress" aria-label={`${completion}% complete`}>
+                <div className="progress-head">
+                  <span className="progress-label">{activeLanguageName} progress</span>
+                  <span className="progress-pct">{completion}%</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: `${completion}%` }} />
+                </div>
+              </div>
+            ) : null}
             <div className="stats-grid">
               <div className="stat">
                 <div className="stat-value">{completion}%</div>
@@ -526,9 +795,14 @@ export default function TranslatorApp() {
               </button>
             </div>
             <p className="help-text">
-              Type each translation{activeLanguage ? ` in ${activeLanguageName}` : ''} in the box under the English.
-              Press <kbd>Enter</kbd> to save and jump to the next, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line, and{' '}
-              <kbd>↑</kbd>/<kbd>↓</kbd> to move between boxes. Leave anything inside {'{{double braces}}'} unchanged.
+              Type each translation{activeLanguage ? ` in ${activeLanguageName}` : ''} in the box under the English.{' '}
+              <kbd>Enter</kbd> saves and jumps to the next, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line,{' '}
+              <kbd>↑</kbd>/<kbd>↓</kbd> move between boxes, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes the last save. Leave
+              anything inside {'{{double braces}}'} unchanged.{' '}
+              <button type="button" className="link-btn" onClick={() => setShowHelp(true)}>
+                Open the full guide
+              </button>
+              .
             </p>
             {error || prUrl ? (
               <div className={`banner ${error ? 'banner-error' : ''}`}>
@@ -570,75 +844,288 @@ export default function TranslatorApp() {
                     <span className="list-group-label">{group.section.label}</span>
                     <span className="list-group-count">{group.rows.length}</span>
                   </div>
-                  {group.rows.map((row) => {
-                    const value = drafts[row.key] ?? '';
-                    const live = checkPlaceholders(row.source, value);
-                    const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
-                    const reviewed = row.status === 'reviewed';
-                    const meta = statusMeta(row.status, flagged);
-                    const saving = !!savingKeys[row.key];
-                    const saved = !!savedKeys[row.key];
-                    return (
-                      <div className={`trow ${flagged ? 'trow-flagged' : ''}`} key={row.key}>
-                        <div className="trow-en">
-                          <span className="trow-en-text">{row.source}</span>
-                          <span className={`badge ${meta.cls}`}>{meta.label}</span>
-                        </div>
-                        {row.placeholders.length > 0 ? (
-                          <div className="trow-ph">
-                            <span className="trow-ph-label">Keep exactly:</span>
-                            {row.placeholders.map((item) => (
-                              <span className="placeholder" key={item}>{`{{${item}}}`}</span>
-                            ))}
-                          </div>
-                        ) : null}
-                        <textarea
-                          id={`tx-${row.key}`}
-                          className="trow-input"
-                          dir="auto"
-                          rows={1}
-                          placeholder={`Type the ${activeLanguageName || 'translation'} here`}
-                          value={value}
-                          onChange={(event) => setDrafts((d) => ({ ...d, [row.key]: event.target.value }))}
-                          onKeyDown={(event) => onRowKeyDown(event, row)}
-                          onBlur={(event) => void commitRow(row, event.target.value)}
-                        />
-                        <div className="trow-foot">
-                          <div className="trow-foot-left">
-                            {rowErrors[row.key] ? (
-                              <span className="trow-err">
-                                <AlertTriangle size={13} /> {rowErrors[row.key]}
-                              </span>
-                            ) : (
-                              <span className="trow-key">{row.key}</span>
-                            )}
-                          </div>
-                          <div className="trow-foot-right">
-                            <span className="trow-status">{saving ? 'Saving...' : saved ? 'Saved' : ''}</span>
-                            <button
-                              type="button"
-                              className={`chk ${reviewed ? 'on' : ''}`}
-                              title={reviewed ? 'Checked. Click to unmark.' : 'Mark this translation as checked'}
-                              disabled={!value.trim() || saving}
-                              onClick={() => void commitRow(row, value, { review: !reviewed, force: true })}
-                            >
-                              <Check size={14} />
-                              {reviewed ? 'Checked' : 'Check'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {group.rows.map((row) => (
+                    <TranslationRow
+                      key={row.key}
+                      row={row}
+                      value={drafts[row.key] ?? ''}
+                      saving={!!savingKeys[row.key]}
+                      saved={!!savedKeys[row.key]}
+                      error={rowErrors[row.key]}
+                      activeLanguageName={activeLanguageName}
+                      onChange={handleChange}
+                      onKeyDown={onRowKeyDown}
+                      onBlur={commitRow}
+                      onToggleCheck={toggleCheck}
+                      onInsertPlaceholder={insertPlaceholder}
+                    />
+                  ))}
                 </div>
               ))
             )}
           </div>
         </section>
       </main>
+      )}
+
+      {pickerOpen ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => {
+            setPickerOpen(false);
+            setPickerQuery('');
+          }}
+        >
+          <div
+            className="modal modal--picker"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add a language"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div className="modal-title">Add a language</div>
+              <button
+                className="picker-x"
+                type="button"
+                title="Close"
+                onClick={() => {
+                  setPickerOpen(false);
+                  setPickerQuery('');
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="picker-search">
+              <Search size={15} />
+              <input
+                className="picker-input"
+                autoFocus
+                placeholder="Search, e.g. Spanish or es"
+                value={pickerQuery}
+                onChange={(event) => setPickerQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    setPickerOpen(false);
+                    setPickerQuery('');
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault();
+                    const first = pickerOptions[0] ?? customOption;
+                    if (first) void addLanguageByCode(first.code, first.name);
+                  }
+                }}
+              />
+            </div>
+            <div className="picker-list">
+              {pickerOptions.map((lang) => (
+                <button
+                  key={lang.code}
+                  className="picker-option"
+                  type="button"
+                  disabled={busy === 'add-language'}
+                  onClick={() => void addLanguageByCode(lang.code, lang.name)}
+                >
+                  <span className="lang-flag">{lang.flag}</span>
+                  <span className="picker-name">{lang.name}</span>
+                  <span className="picker-native">{lang.native}</span>
+                  <span className="picker-code">{lang.code}</span>
+                </button>
+              ))}
+              {customOption ? (
+                <button
+                  className="picker-option"
+                  type="button"
+                  disabled={busy === 'add-language'}
+                  onClick={() => void addLanguageByCode(customOption.code, customOption.name)}
+                >
+                  <span className="lang-flag">{customOption.flag}</span>
+                  <span className="picker-name">Add {customOption.name}</span>
+                  <span className="picker-native">custom code</span>
+                  <span className="picker-code">{customOption.code}</span>
+                </button>
+              ) : null}
+              {pickerOptions.length === 0 && !customOption ? (
+                <div className="empty">No match. Type a language code like pt-BR.</div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showHelp ? (
+        <div className="modal-backdrop" role="presentation" onClick={dismissTutorial}>
+          <div
+            className="modal modal--guide"
+            role="dialog"
+            aria-modal="true"
+            aria-label="How to translate Grimoire"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div className="modal-title">
+                <Lightbulb size={18} /> How to translate Grimoire
+              </div>
+              <button className="picker-x" type="button" title="Close" onClick={dismissTutorial}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="guide-body">
+              <p className="guide-lead">
+                Thanks for helping translate Grimoire. You do not need to be a developer. Here is the whole job in
+                four steps.
+              </p>
+              <ol className="guide-steps">
+                <li>
+                  <span className="guide-step-num">1</span>
+                  <div>
+                    <strong>Pick a language.</strong> Choose one on the left, or press{' '}
+                    <strong>Add a language</strong> to start a new one.
+                  </div>
+                </li>
+                <li>
+                  <span className="guide-step-num">2</span>
+                  <div>
+                    <strong>Type the translation</strong> in the box under each English phrase. Press <kbd>Enter</kbd>{' '}
+                    to save and jump to the next, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line, and{' '}
+                    <kbd>↑</kbd>/<kbd>↓</kbd> to move between boxes. It saves on its own when you click away too.
+                  </div>
+                </li>
+                <li>
+                  <span className="guide-step-num">3</span>
+                  <div>
+                    <strong>Keep the {'{{tags}}'}.</strong> Anything inside double braces, like{' '}
+                    <span className="placeholder">{'{{count}}'}</span>, is a slot the app fills in. Click the chip
+                    under the English to drop it into your text. We warn you (
+                    <span className="badge flagged">Needs fix</span>) if one goes missing.
+                  </div>
+                </li>
+                <li>
+                  <span className="guide-step-num">4</span>
+                  <div>
+                    <strong>Submit when ready.</strong> Press <strong>Submit translations</strong> to send your work
+                    to the developer. Nothing goes live until they review it.
+                  </div>
+                </li>
+              </ol>
+              <div className="guide-tips">
+                <div className="guide-tip">
+                  <Undo2 size={15} /> Made a mistake? Press <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the <strong>Undo</strong>{' '}
+                  button) to bring back what you just changed. <kbd>Esc</kbd> clears the box you are in.
+                </div>
+                <div className="guide-tip">
+                  <Check size={15} /> Use the <strong>Check</strong> button to mark a translation you are confident
+                  in. The tabs up top let you focus on what is <strong>To do</strong>.
+                </div>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-primary" type="button" onClick={dismissTutorial}>
+                Got it, let's go
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
+
+interface TranslationRowProps {
+  row: CatalogRow;
+  value: string;
+  saving: boolean;
+  saved: boolean;
+  error?: string;
+  activeLanguageName: string;
+  onChange: (key: string, value: string) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => void;
+  onBlur: (row: CatalogRow, value: string) => void;
+  onToggleCheck: (row: CatalogRow, value: string, reviewed: boolean) => void;
+  onInsertPlaceholder: (key: string, name: string) => void;
+}
+
+// One translation row, memoized so a keystroke only re-renders the row being
+// edited instead of the whole catalog. All handler props are stable
+// (useCallback in the parent), so memo can skip every untouched row.
+const TranslationRow = memo(function TranslationRow({
+  row,
+  value,
+  saving,
+  saved,
+  error,
+  activeLanguageName,
+  onChange,
+  onKeyDown,
+  onBlur,
+  onToggleCheck,
+  onInsertPlaceholder,
+}: TranslationRowProps) {
+  const live = checkPlaceholders(row.source, value);
+  const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
+  const reviewed = row.status === 'reviewed';
+  const meta = statusMeta(row.status, flagged);
+  return (
+    <div className={`trow ${flagged ? 'trow-flagged' : ''}`}>
+      <div className="trow-en">
+        <span className="trow-en-text">{row.source}</span>
+        <span className={`badge ${meta.cls}`}>{meta.label}</span>
+      </div>
+      {row.placeholders.length > 0 ? (
+        <div className="trow-ph">
+          <span className="trow-ph-label">Keep these (click to insert):</span>
+          {row.placeholders.map((item) => (
+            <button
+              type="button"
+              className="placeholder placeholder-btn"
+              key={item}
+              title={`Insert {{${item}}} at the cursor`}
+              onClick={() => onInsertPlaceholder(row.key, item)}
+            >
+              {`{{${item}}}`}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <textarea
+        id={`tx-${row.key}`}
+        className="trow-input"
+        dir="auto"
+        rows={1}
+        placeholder={`Type the ${activeLanguageName || 'translation'} here`}
+        value={value}
+        onChange={(event) => onChange(row.key, event.target.value)}
+        onKeyDown={(event) => onKeyDown(event, row)}
+        onBlur={(event) => onBlur(row, event.target.value)}
+      />
+      <div className="trow-foot">
+        <div className="trow-foot-left">
+          {error ? (
+            <span className="trow-err">
+              <AlertTriangle size={13} /> {error}
+            </span>
+          ) : (
+            <span className="trow-key">{row.key}</span>
+          )}
+        </div>
+        <div className="trow-foot-right">
+          <span className="trow-status">{saving ? 'Saving...' : saved ? 'Saved' : ''}</span>
+          <button
+            type="button"
+            className={`chk ${reviewed ? 'on' : ''}`}
+            title={reviewed ? 'Checked. Click to unmark.' : 'Mark this translation as checked'}
+            disabled={!value.trim() || saving}
+            onClick={() => onToggleCheck(row, value, reviewed)}
+          >
+            <Check size={14} />
+            {reviewed ? 'Checked' : 'Check'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(url, {
@@ -664,6 +1151,15 @@ function displayName(code: string): string {
   } catch {
     return code;
   }
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
 function placeholders(value: string): string[] {

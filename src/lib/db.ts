@@ -15,6 +15,36 @@ export interface TranslationRow {
   updated_at: string;
 }
 
+export interface ContributorRow {
+  id: string;
+  display_name: string;
+  avatar_url: string | null;
+  role: 'translator' | 'reviewer' | 'admin';
+  trust_level: number;
+  banned_at: string | null;
+  created_at: string;
+  last_seen_at: string;
+}
+
+export interface ContributorDashboardRow extends ContributorRow {
+  suggestion_count: number;
+  pending_suggestion_count: number;
+}
+
+export interface TranslationSuggestionRow {
+  id: string;
+  language_code: string;
+  translation_key: string;
+  source_hash: string;
+  value: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  contributor_id: string;
+  context_route: string | null;
+  app_version: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export async function listLanguages(db: D1Database): Promise<LanguageRow[]> {
   const result = await db
     .prepare<LanguageRow>(
@@ -114,4 +144,129 @@ export async function deleteTranslation(
     .prepare('DELETE FROM translations WHERE language_code = ? AND translation_key = ?')
     .bind(languageCode, key)
     .run();
+}
+
+export async function upsertContributor(
+  db: D1Database,
+  params: { id: string; displayName: string; avatarUrl: string | null }
+): Promise<ContributorRow | null> {
+  await db
+    .prepare(
+      `INSERT INTO contributors (id, display_name, avatar_url, last_seen_at)
+       VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+       ON CONFLICT(id) DO UPDATE SET
+         display_name = excluded.display_name,
+         avatar_url = excluded.avatar_url,
+         last_seen_at = excluded.last_seen_at`
+    )
+    .bind(params.id, params.displayName, params.avatarUrl)
+    .run();
+
+  return await db
+    .prepare<ContributorRow>(
+      `SELECT id, display_name, avatar_url, role, trust_level, banned_at, created_at, last_seen_at
+       FROM contributors
+       WHERE id = ?`
+    )
+    .bind(params.id)
+    .first();
+}
+
+export async function insertTranslationSuggestion(
+  db: D1Database,
+  params: {
+    id: string;
+    languageCode: string;
+    key: string;
+    sourceHash: string;
+    value: string;
+    contributorId: string;
+    contextRoute: string | null;
+    appVersion: string | null;
+  }
+): Promise<TranslationSuggestionRow | null> {
+  await db
+    .prepare(
+      `INSERT INTO translation_suggestions (
+         id, language_code, translation_key, source_hash, value, contributor_id,
+         context_route, app_version
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      params.id,
+      params.languageCode,
+      params.key,
+      params.sourceHash,
+      params.value,
+      params.contributorId,
+      params.contextRoute,
+      params.appVersion
+    )
+    .run();
+
+  return await db
+    .prepare<TranslationSuggestionRow>(
+      `SELECT id, language_code, translation_key, source_hash, value, status,
+              contributor_id, context_route, app_version, created_at, updated_at
+       FROM translation_suggestions
+       WHERE id = ?`
+    )
+    .bind(params.id)
+    .first();
+}
+
+export async function countPendingSuggestions(db: D1Database, languageCode: string): Promise<number> {
+  const row = await db
+    .prepare<{ count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM translation_suggestions
+       WHERE language_code = ? AND status = 'pending'`
+    )
+    .bind(languageCode)
+    .first();
+  return row?.count ?? 0;
+}
+
+export async function listContributors(db: D1Database): Promise<ContributorDashboardRow[]> {
+  const result = await db
+    .prepare<ContributorDashboardRow>(
+      `SELECT
+         c.id,
+         c.display_name,
+         c.avatar_url,
+         c.role,
+         c.trust_level,
+         c.banned_at,
+         c.created_at,
+         c.last_seen_at,
+         COUNT(s.id) AS suggestion_count,
+         COALESCE(SUM(CASE WHEN s.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_suggestion_count
+       FROM contributors c
+       LEFT JOIN translation_suggestions s ON s.contributor_id = c.id
+       GROUP BY c.id
+       ORDER BY c.last_seen_at DESC`
+    )
+    .all();
+  return result.results ?? [];
+}
+
+export async function updateContributorRole(
+  db: D1Database,
+  contributorId: string,
+  role: ContributorRow['role']
+): Promise<ContributorRow | null> {
+  await db
+    .prepare('UPDATE contributors SET role = ? WHERE id = ?')
+    .bind(role, contributorId)
+    .run();
+
+  return await db
+    .prepare<ContributorRow>(
+      `SELECT id, display_name, avatar_url, role, trust_level, banned_at, created_at, last_seen_at
+       FROM contributors
+       WHERE id = ?`
+    )
+    .bind(contributorId)
+    .first();
 }

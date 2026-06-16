@@ -15,7 +15,8 @@
   },
   "vars": {
     "GITHUB_REPO": "Slush97/grimoire",
-    "GITHUB_BRANCH": "main"
+    "GITHUB_BRANCH": "main",
+    "GRIMOIRE_SOCIAL_BASE_URL": "https://grimoire-social.slusheliott.workers.dev"
   },
   "kv_namespaces": [
     {

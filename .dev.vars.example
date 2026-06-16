@@ -8,6 +8,7 @@
 CF_ACCESS_TEAM=
 CF_ACCESS_AUD=
 TRANSLATOR_EMAIL=local-dev@grimoire
+GRIMOIRE_SOCIAL_BASE_URL=http://localhost:8787
 
 # Fine-grained GitHub PAT for PR creation.
 # Required scopes/permissions on Slush97/grimoire:
