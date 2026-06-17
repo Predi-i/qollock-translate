@@ -128,8 +128,11 @@ textarea:focus-visible {
 .list-pane {
   border-right: 1px solid var(--color-border);
   background: var(--color-base);
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* Flex column (not a fixed-row grid) so any number of header rows -- search,
+     the optional glossary nudge, the file bar, the tabs -- stack naturally and
+     only the key list grows to fill the rest. */
+  display: flex;
+  flex-direction: column;
 }
 
 .editor-pane {
@@ -285,6 +288,19 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.file-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 4px 12px;
+}
+
+/* Push the primary action to the far end; on wrap it stays end-aligned. */
+.file-bar-submit {
+  margin-left: auto;
+}
+
 .segmented {
   display: grid;
   grid-auto-flow: column;
@@ -312,6 +328,8 @@ textarea:focus-visible {
 }
 
 .key-list {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -703,6 +721,22 @@ textarea:focus-visible {
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+}
+
+.import-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.import-toggle input {
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 /* Empty-state prompt that points new translators at the glossary panel. */
@@ -1245,6 +1279,32 @@ kbd {
 
 .trow-flagged .trow-input {
   border-color: rgba(245, 158, 11, 0.6);
+}
+
+/* A box pre-filled from the glossary but not yet accepted: dashed border and a
+   muted tint so it reads as a suggestion, not a saved translation. */
+.trow-input--prefill {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-panel-2));
+  color: var(--color-muted);
+}
+
+.trow-input--prefill:focus {
+  border-style: solid;
+  color: var(--color-fg);
+}
+
+.trow-prefill-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-accent) 70%, var(--color-muted));
+}
+
+.trow-prefill-hint svg {
+  flex-shrink: 0;
 }
 
 .trow-foot {

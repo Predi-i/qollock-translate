@@ -53,6 +53,9 @@ Create a Cloudflare Access application for:
 https://translate.grimoiremods.com
 ```
 
+Translator allowlist updates are documented in
+[`docs/translator-access.md`](docs/translator-access.md).
+
 Set these Worker secrets:
 
 ```sh
@@ -102,7 +105,11 @@ exist yet.
 1. The app reads English source strings from `Slush97/grimoire`:
    `src/locales/en/translation.json`.
 2. Translators add languages and save string values in D1.
-3. Export generates `src/locales/<lang>/translation.json` shape.
+3. Download exports the language in `src/locales/<lang>/translation.json` shape;
+   Upload reads an edited file of that shape back into D1 (unknown keys and
+   placeholder mismatches are skipped). By default Upload only fills blank
+   strings; untick "Only fill blanks" to let the file overwrite existing
+   translations.
 4. PR creates or updates a `translations/<lang>` branch and opens a GitHub PR.
 
 ## Limits
