@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Trash2,
   Undo2,
+  Upload,
   Users,
   X,
 } from 'lucide-react';
@@ -24,7 +25,7 @@ import { isLockedGlossaryTerm, lockedGlossaryNote, SHORT_GLOSSARY_TERMS } from '
 import { COMMON_LANGUAGES, flagForCode, sectionForKey, type SectionMeta } from '../lib/languages';
 
 type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
-type Filter = 'open' | 'flagged' | 'done' | 'review' | 'all';
+type Filter = 'open' | 'flagged' | 'done' | 'checked' | 'review' | 'suggested' | 'all';
 type View = 'translations' | 'contributors';
 type ContributorRole = 'translator' | 'reviewer' | 'admin';
 type GlossaryFilter = 'missing' | 'saved' | 'all';
@@ -74,6 +75,22 @@ interface Contributor {
   pending_suggestion_count: number;
 }
 
+// A pending translation suggested from inside the Grimoire client. `stale` means
+// the English source changed since it was suggested, so it may no longer fit.
+interface Suggestion {
+  id: string;
+  key: string;
+  value: string;
+  source: string | null;
+  currentValue: string;
+  stale: boolean;
+  contributorName: string;
+  contributorAvatar: string | null;
+  contextRoute: string | null;
+  appVersion: string | null;
+  createdAt: string;
+}
+
 interface GlossaryTerm {
   sourceTerm: string;
   targetTerm: string;
@@ -119,7 +136,9 @@ interface UndoEntry {
 const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 const CODE_RE = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
+const GLOSSARY_OPEN_KEY = 'gt.glossaryOpen.v1';
 const EMPTY_GLOSSARY_MATCHES: GlossaryTerm[] = [];
+const EMPTY_SUGGESTIONS: Suggestion[] = [];
 const PRIORITY_GLOSSARY_TERMS = [
   'Grimoire',
   'Deadlock',
@@ -342,6 +361,7 @@ export default function TranslatorApp() {
   const [languages, setLanguages] = useState<Language[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState('');
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('open');
@@ -354,6 +374,13 @@ export default function TranslatorApp() {
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // Upload merge mode: when true, an uploaded file only fills blank strings and
+  // never overwrites an existing translation. On by default (the safe choice).
+  const [importFillEmptyOnly, setImportFillEmptyOnly] = useState(true);
+  // The most recent un-reverted import for this language. Drives the "Undo last
+  // import" affordance so a wrong upload (e.g. the English source) is one click
+  // to roll back. Survives reload via GET /api/import.
+  const [lastImportBatch, setLastImportBatch] = useState<{ id: string; rowCount: number } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [undoDepth, setUndoDepth] = useState(0);
   const [glossaryOpen, setGlossaryOpen] = useState(false);
@@ -379,6 +406,10 @@ export default function TranslatorApp() {
   // one box never re-renders the other ~60 rows) while still reading fresh state.
   const selectedLanguageRef = useRef(selectedLanguage);
   const orderedKeysRef = useRef<string[]>([]);
+  // Keys we have already auto-filled from the glossary this language load, so the
+  // prefill effect never re-seeds a box the translator cleared or edited.
+  const prefilledRef = useRef<Set<string>>(new Set());
+  const importInputRef = useRef<HTMLInputElement>(null);
   catalogRef.current = catalog;
   selectedLanguageRef.current = selectedLanguage;
 
@@ -390,9 +421,28 @@ export default function TranslatorApp() {
       // localStorage may be unavailable; skip the first-run tutorial.
     }
     try {
-      setGlossaryOpen(window.matchMedia('(min-width: 1121px)').matches);
+      // Remember the translator's last choice so the panel does not silently
+      // re-collapse on every visit. First-timers default to open on wide
+      // screens; on narrower ones it stays behind the button + nudge.
+      const stored = localStorage.getItem(GLOSSARY_OPEN_KEY);
+      if (stored === '1' || stored === '0') {
+        setGlossaryOpen(stored === '1');
+      } else {
+        setGlossaryOpen(window.matchMedia('(min-width: 1121px)').matches);
+      }
     } catch {
-      // matchMedia may be unavailable in tests; keep the glossary behind the button.
+      // matchMedia/localStorage may be unavailable in tests; keep it behind the button.
+    }
+  }, []);
+
+  // Single entry point for showing/hiding the glossary so every toggle (toolbar
+  // button, panel close, empty-state nudge) persists the same preference.
+  const setGlossaryVisible = useCallback((next: boolean) => {
+    setGlossaryOpen(next);
+    try {
+      localStorage.setItem(GLOSSARY_OPEN_KEY, next ? '1' : '0');
+    } catch {
+      // localStorage may be unavailable; the in-memory state still updates.
     }
   }, []);
 
@@ -466,14 +516,34 @@ export default function TranslatorApp() {
       setLanguages(next.languages);
       setDrafts(Object.fromEntries(next.rows.map((row) => [row.key, row.value])));
       savedValues.current = new Map(next.rows.map((row) => [row.key, row.value]));
+      prefilledRef.current = new Set();
       undoStack.current = [];
       setUndoDepth(0);
       setRowErrors({});
       setSavedKeys({});
+      void loadSuggestions(languageCode);
+      void loadLastImportBatch(languageCode);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy('');
+    }
+  }
+
+  async function loadSuggestions(languageCode = selectedLanguage) {
+    if (!languageCode) {
+      setSuggestions([]);
+      return;
+    }
+    try {
+      const result = await fetchJson<{ suggestions: Suggestion[] }>(
+        `/api/suggestions?lang=${encodeURIComponent(languageCode)}`
+      );
+      if (selectedLanguageRef.current !== languageCode) return;
+      setSuggestions(result.suggestions);
+    } catch {
+      // Suggestions are a side panel, not the main flow; a failure here should
+      // not block translating. Leave whatever we had and stay quiet.
     }
   }
 
@@ -574,6 +644,44 @@ export default function TranslatorApp() {
       });
       return { ...prev, rows, stats: computeStats(rows) };
     });
+  }, []);
+
+  // Accept a player's suggestion: it becomes the saved translation, and the row
+  // updates in place. Returns an error string if the server rejected it (e.g. the
+  // English changed and placeholders no longer match). Resolves to null on success.
+  const acceptSuggestion = useCallback(async (suggestion: Suggestion): Promise<string | null> => {
+    try {
+      await fetchJson(`/api/suggestions/${encodeURIComponent(suggestion.id)}`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'accept' }),
+      });
+    } catch (err) {
+      return (err as Error).message;
+    }
+    const key = suggestion.key;
+    const value = suggestion.value;
+    setDrafts((d) => ({ ...d, [key]: value }));
+    savedValues.current.set(key, value);
+    patchRow(key, value, 'translated', false);
+    // The server accepts one suggestion per string and rejects the rest, so drop
+    // every pending suggestion for this key from the list.
+    setSuggestions((prev) => prev.filter((s) => s.key !== key));
+    setSavedKeys((s) => ({ ...s, [key]: true }));
+    window.setTimeout(() => setSavedKeys((s) => ({ ...s, [key]: false })), 1400);
+    return null;
+  }, [patchRow]);
+
+  const rejectSuggestion = useCallback(async (suggestion: Suggestion): Promise<string | null> => {
+    try {
+      await fetchJson(`/api/suggestions/${encodeURIComponent(suggestion.id)}`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'reject' }),
+      });
+    } catch (err) {
+      return (err as Error).message;
+    }
+    setSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id));
+    return null;
   }, []);
 
   // Save a single row. Returns true if it saved (or was a no-op), false if blocked.
@@ -684,9 +792,141 @@ export default function TranslatorApp() {
     }
   }
 
+  async function importCatalogFile(file: File) {
+    if (!selectedLanguage) return;
+    setBusy('import');
+    setError('');
+    setMessage('');
+    try {
+      let catalogJson: unknown;
+      try {
+        catalogJson = JSON.parse(await file.text());
+      } catch {
+        throw new Error(`${file.name} is not valid JSON`);
+      }
+
+      const postImport = (confirmSourceUpload: boolean) =>
+        fetchJson<{
+          imported: number;
+          unchanged: number;
+          skippedExisting: number;
+          unknownKeys: number;
+          rejected: Array<{ key: string; missing: string[]; extra: string[] }>;
+          batchId: string | null;
+          needsConfirm?: boolean;
+          sourceMatches?: number;
+          comparable?: number;
+        }>('/api/import', {
+          method: 'POST',
+          body: JSON.stringify({
+            languageCode: selectedLanguage,
+            catalog: catalogJson,
+            fillEmptyOnly: importFillEmptyOnly,
+            confirmSourceUpload,
+          }),
+        });
+
+      let result = await postImport(false);
+
+      // The file looks like the English source, not a translation. Make the
+      // translator confirm before anything is written (this is the common
+      // "oops, wrong file" case).
+      if (result.needsConfirm) {
+        const ok = window.confirm(
+          `This file looks like the English source, not a translation: ` +
+            `${result.sourceMatches} of ${result.comparable} strings are identical to the English text.\n\n` +
+            `If you picked the wrong file, click Cancel and choose your translated file.\n\n` +
+            `Upload it anyway?`
+        );
+        if (!ok) {
+          setMessage('Upload cancelled. No changes were made.');
+          return;
+        }
+        result = await postImport(true);
+      }
+
+      // Reload so the grid reflects what landed before we report the tally.
+      await loadCatalog(selectedLanguage);
+      // loadCatalog refreshes the undo target from the server; trust the import
+      // response too in case its write and the GET race.
+      if (result.batchId && result.imported) {
+        setLastImportBatch({ id: result.batchId, rowCount: result.imported });
+      }
+
+      const parts = [`Imported ${result.imported} string${result.imported === 1 ? '' : 's'}`];
+      if (result.unchanged) parts.push(`${result.unchanged} unchanged`);
+      if (result.skippedExisting) parts.push(`${result.skippedExisting} kept (already translated)`);
+      if (result.unknownKeys) parts.push(`${result.unknownKeys} unknown skipped`);
+      if (result.rejected.length) parts.push(`${result.rejected.length} rejected (placeholder mismatch)`);
+      setMessage(parts.join(', '));
+      if (result.rejected.length) {
+        const sample = result.rejected.slice(0, 3).map((r) => r.key).join(', ');
+        setError(
+          `${result.rejected.length} string${result.rejected.length === 1 ? '' : 's'} skipped for placeholder mismatch: ${sample}${result.rejected.length > 3 ? ', ...' : ''}`
+        );
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function loadLastImportBatch(languageCode = selectedLanguage) {
+    if (!languageCode) {
+      setLastImportBatch(null);
+      return;
+    }
+    try {
+      const result = await fetchJson<{ batch: { id: string; rowCount: number } | null }>(
+        `/api/import?lang=${encodeURIComponent(languageCode)}`
+      );
+      if (selectedLanguageRef.current !== languageCode) return;
+      setLastImportBatch(result.batch);
+    } catch {
+      // A missing undo target is not worth surfacing; just hide the affordance.
+      setLastImportBatch(null);
+    }
+  }
+
+  async function undoLastImport() {
+    if (!lastImportBatch) return;
+    setBusy('import');
+    setError('');
+    setMessage('');
+    try {
+      const result = await fetchJson<{ reverted: number }>('/api/import-undo', {
+        method: 'POST',
+        body: JSON.stringify({ batchId: lastImportBatch.id }),
+      });
+      setLastImportBatch(null);
+      await loadCatalog(selectedLanguage);
+      setMessage(
+        `Undid the import: ${result.reverted} string${result.reverted === 1 ? '' : 's'} rolled back` +
+          (result.reverted < lastImportBatch.rowCount
+            ? ` (${lastImportBatch.rowCount - result.reverted} left as-is because you had edited them since)`
+            : '')
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   // Filter on the SAVED value, not the live draft, so a row never disappears
   // out from under the cursor as soon as the translator starts typing. It moves
   // between tabs only after a save (Enter / blur).
+  const suggestionsByKey = useMemo(() => {
+    const map = new Map<string, Suggestion[]>();
+    for (const s of suggestions) {
+      const list = map.get(s.key);
+      if (list) list.push(s);
+      else map.set(s.key, [s]);
+    }
+    return map;
+  }, [suggestions]);
+
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return (catalog?.rows ?? []).filter((row) => {
@@ -697,7 +937,11 @@ export default function TranslatorApp() {
         (filter === 'open' && !done) ||
         (filter === 'flagged' && flagged) ||
         (filter === 'review' && row.needsReview) ||
-        (filter === 'done' && done);
+        (filter === 'checked' && row.status === 'reviewed') ||
+        (filter === 'suggested' && suggestionsByKey.has(row.key)) ||
+        // Done = translated but not yet checked; checked strings live in their
+        // own tab so the two lists do not overlap.
+        (filter === 'done' && done && row.status !== 'reviewed');
       const matchesQuery =
         !needle ||
         row.key.toLowerCase().includes(needle) ||
@@ -705,7 +949,7 @@ export default function TranslatorApp() {
         row.value.toLowerCase().includes(needle);
       return matchesFilter && matchesQuery;
     });
-  }, [catalog, filter, query]);
+  }, [catalog, filter, query, suggestionsByKey]);
 
   const orderedKeys = useMemo(() => filteredRows.map((row) => row.key), [filteredRows]);
   orderedKeysRef.current = orderedKeys;
@@ -738,6 +982,46 @@ export default function TranslatorApp() {
     [glossary]
   );
 
+  // When an untranslated string IS a glossary term on its own (e.g. the whole
+  // English is "Profile" and the glossary agrees Profile -> Profil), we can fill
+  // the box with the agreed translation up front. The translator just presses
+  // Enter to accept (or types over it). Only exact, whole-string matches qualify,
+  // so we never guess at word order for longer phrases.
+  const glossaryPrefills = useMemo(() => {
+    const out = new Map<string, string>();
+    if (!catalog) return out;
+    for (const row of catalog.rows) {
+      if (row.value.trim()) continue; // already has a saved translation
+      const matches = glossaryMatchesByKey.get(row.key);
+      if (!matches) continue;
+      const src = row.source.trim().toLowerCase();
+      const exact = matches.find((term) => term.sourceTerm.trim().toLowerCase() === src);
+      if (exact && exact.targetTerm.trim()) out.set(row.key, exact.targetTerm);
+    }
+    return out;
+  }, [catalog, glossaryMatchesByKey]);
+
+  // Seed the prefill into each empty box once. We never clobber text the
+  // translator has typed or saved, and prefilledRef keeps us from re-seeding a
+  // box they deliberately cleared. These stay client-side drafts until committed,
+  // so untouched prefills are never written to the server or counted as done.
+  useEffect(() => {
+    if (glossaryPrefills.size === 0) return;
+    setDrafts((d) => {
+      let changed = false;
+      const next = { ...d };
+      for (const [key, value] of glossaryPrefills) {
+        if (prefilledRef.current.has(key)) continue;
+        if ((d[key] ?? '') !== '') continue;
+        if ((savedValues.current.get(key) ?? '').trim() !== '') continue;
+        next[key] = value;
+        prefilledRef.current.add(key);
+        changed = true;
+      }
+      return changed ? next : d;
+    });
+  }, [glossaryPrefills]);
+
   const pickerOptions = useMemo(() => {
     const taken = new Set(languages.map((l) => l.code.toLowerCase()));
     const needle = pickerQuery.trim().toLowerCase();
@@ -752,7 +1036,7 @@ export default function TranslatorApp() {
 
   const customOption = useMemo(() => {
     const raw = pickerQuery.trim();
-    if (!raw || !CODE_RE.test(raw) || raw.toLowerCase() === 'en') return null;
+    if (!raw || !CODE_RE.test(raw)) return null;
     const taken = new Set(languages.map((l) => l.code.toLowerCase()));
     if (taken.has(raw.toLowerCase())) return null;
     if (COMMON_LANGUAGES.some((l) => l.code.toLowerCase() === raw.toLowerCase())) return null;
@@ -950,12 +1234,26 @@ export default function TranslatorApp() {
     ? Math.round((catalog.stats.completed / catalog.stats.total) * 100)
     : 0;
   const reviewCount = catalog?.rows.filter((row) => row.needsReview).length ?? 0;
+  const checkedCount = catalog?.rows.filter((row) => row.status === 'reviewed').length ?? 0;
+  const suggestionCount = suggestionsByKey.size;
 
   // If the review queue empties (last flag cleared), the hidden tab would leave
   // you staring at an empty list, so fall back to To do.
   useEffect(() => {
     if (filter === 'review' && reviewCount === 0) setFilter('open');
   }, [filter, reviewCount]);
+
+  // Same guard for the Checked tab: if the last checked string is un-checked or
+  // edited back to a draft, the tab disappears, so step back to To do.
+  useEffect(() => {
+    if (filter === 'checked' && checkedCount === 0) setFilter('open');
+  }, [filter, checkedCount]);
+
+  // Same guard for the suggestions tab: once you have triaged the last one, the
+  // tab disappears, so step back to To do rather than an empty list.
+  useEffect(() => {
+    if (filter === 'suggested' && suggestionCount === 0) setFilter('open');
+  }, [filter, suggestionCount]);
   const exportHref = selectedLanguage ? `/api/export?lang=${encodeURIComponent(selectedLanguage)}` : '#';
   const activeLanguage = languages.find((l) => l.code === selectedLanguage);
   const activeLanguageName = activeLanguage?.name ?? selectedLanguage;
@@ -986,10 +1284,11 @@ export default function TranslatorApp() {
               className={`btn ${glossaryOpen ? 'btn-secondary' : ''}`}
               type="button"
               title="Open or close the glossary helper"
-              onClick={() => setGlossaryOpen((open) => !open)}
+              onClick={() => setGlossaryVisible(!glossaryOpen)}
             >
               <BookOpen size={16} />
               Glossary
+              {savedGlossaryCount > 0 ? <span className="btn-badge">{savedGlossaryCount}</span> : null}
             </button>
           ) : null}
           {view === 'translations' ? (
@@ -1023,24 +1322,6 @@ export default function TranslatorApp() {
             <Users size={16} />
             {view === 'contributors' ? 'Translations' : 'Contributors'}
           </button>
-          {view === 'translations' ? (
-            <>
-              <a className="btn btn-secondary" href={exportHref} title="Download this language as a file">
-                <Download size={16} />
-                Download
-              </a>
-              <button
-                className="btn btn-primary"
-                type="button"
-                title="Send your translations to the developer for review"
-                disabled={!!busy || !selectedLanguage || !catalog?.stats.completed}
-                onClick={() => void createPullRequest()}
-              >
-                <GitPullRequest size={16} />
-                Submit translations
-              </button>
-            </>
-          ) : null}
         </div>
       </header>
 
@@ -1232,12 +1513,89 @@ export default function TranslatorApp() {
             ) : null}
           </div>
 
+          {catalog && savedGlossaryCount === 0 && !glossaryOpen ? (
+            <button type="button" className="glossary-nudge" onClick={() => setGlossaryVisible(true)}>
+              <BookOpen size={16} />
+              <span>
+                <strong>Set up your glossary first.</strong>{' '}
+                {glossaryCandidates.length > 0
+                  ? `We found ${glossaryCandidates.length} words that repeat across Grimoire. Agree on how each one is translated once, and the app suggests it everywhere, so you stay consistent and type less.`
+                  : 'Agree on how key words are translated once, and the app suggests them everywhere, so you stay consistent and type less.'}{' '}
+                Open it to get started.
+              </span>
+            </button>
+          ) : null}
+
+          <div className="file-bar">
+            <a className="btn btn-secondary" href={exportHref} title="Download this language as a file">
+              <Download size={16} />
+              Download
+            </a>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // Reset so picking the same file again still fires onChange.
+                e.target.value = '';
+                if (file) void importCatalogFile(file);
+              }}
+            />
+            <button
+              className="btn btn-secondary"
+              type="button"
+              title="Upload an edited language file to load your translations"
+              disabled={!!busy || !selectedLanguage}
+              onClick={() => importInputRef.current?.click()}
+            >
+              <Upload size={16} />
+              Upload
+            </button>
+            <label
+              className="import-toggle"
+              title="When on, an upload only fills blank strings and never overwrites an existing translation"
+            >
+              <input
+                type="checkbox"
+                checked={importFillEmptyOnly}
+                onChange={(e) => setImportFillEmptyOnly(e.target.checked)}
+              />
+              Only fill blanks
+            </label>
+            {lastImportBatch && (
+              <button
+                className="btn btn-secondary"
+                type="button"
+                title="Roll back the most recent upload. Strings you have edited by hand since then are kept."
+                disabled={!!busy}
+                onClick={() => void undoLastImport()}
+              >
+                <Undo2 size={16} />
+                Undo import ({lastImportBatch.rowCount})
+              </button>
+            )}
+            <button
+              className="btn btn-primary file-bar-submit"
+              type="button"
+              title="Send your translations to the developer for review"
+              disabled={!!busy || !selectedLanguage || !catalog?.stats.completed}
+              onClick={() => void createPullRequest()}
+            >
+              <GitPullRequest size={16} />
+              Submit translations
+            </button>
+          </div>
+
           <div className="segmented" role="tablist" aria-label="String filters">
             {([
               ['open', 'To do'],
               ['flagged', 'Needs fix'],
               ['done', 'Done'],
+              ...(checkedCount > 0 ? ([['checked', `Checked (${checkedCount})`]] as Array<[Filter, string]>) : []),
               ...(reviewCount > 0 ? ([['review', `To review (${reviewCount})`]] as Array<[Filter, string]>) : []),
+              ...(suggestionCount > 0 ? ([['suggested', `Suggestions (${suggestionCount})`]] as Array<[Filter, string]>) : []),
             ] as Array<[Filter, string]>).map(([value, label]) => (
               <button
                 key={value}
@@ -1269,7 +1627,11 @@ export default function TranslatorApp() {
                       saved={!!savedKeys[row.key]}
                       error={rowErrors[row.key]}
                       activeLanguageName={activeLanguageName}
+                      glossaryPrefill={glossaryPrefills.get(row.key)}
                       glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
+                      suggestions={suggestionsByKey.get(row.key) ?? EMPTY_SUGGESTIONS}
+                      onAcceptSuggestion={acceptSuggestion}
+                      onRejectSuggestion={rejectSuggestion}
                       onChange={handleChange}
                       onKeyDown={onRowKeyDown}
                       onBlur={commitRow}
@@ -1297,7 +1659,7 @@ export default function TranslatorApp() {
             savedCount={savedGlossaryCount}
             saving={savingGlossary}
             saved={savedGlossary}
-            onClose={() => setGlossaryOpen(false)}
+            onClose={() => setGlossaryVisible(false)}
             onFilterChange={(next) => {
               setGlossaryFilter(next);
               setPinnedGlossary({});
@@ -1417,7 +1779,7 @@ export default function TranslatorApp() {
             <div className="guide-body">
               <p className="guide-lead">
                 Thanks for helping translate Grimoire. You do not need to be a developer. Here is the whole job in
-                four steps.
+                five steps.
               </p>
               <ol className="guide-steps">
                 <li>
@@ -1430,13 +1792,22 @@ export default function TranslatorApp() {
                 <li>
                   <span className="guide-step-num">2</span>
                   <div>
+                    <strong>Set up your glossary first.</strong> Open the <strong>Glossary</strong> and you will see the
+                    words that come up again and again across Grimoire, already gathered for you. Agree on how each one
+                    is translated once, and the app suggests it everywhere, so your work stays consistent and you type
+                    less. This is the step that saves the most time, so it is worth doing before you dive in.
+                  </div>
+                </li>
+                <li>
+                  <span className="guide-step-num">3</span>
+                  <div>
                     <strong>Type the translation</strong> in the box under each English phrase. Press <kbd>Enter</kbd>{' '}
                     to save and jump to the next, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line, and{' '}
                     <kbd>↑</kbd>/<kbd>↓</kbd> to move between boxes. It saves on its own when you click away too.
                   </div>
                 </li>
                 <li>
-                  <span className="guide-step-num">3</span>
+                  <span className="guide-step-num">4</span>
                   <div>
                     <strong>Keep the {'{{tags}}'}.</strong> Anything inside double braces, like{' '}
                     <span className="placeholder">{'{{count}}'}</span>, is a slot the app fills in. Click the chip
@@ -1445,7 +1816,7 @@ export default function TranslatorApp() {
                   </div>
                 </li>
                 <li>
-                  <span className="guide-step-num">4</span>
+                  <span className="guide-step-num">5</span>
                   <div>
                     <strong>Submit when ready.</strong> Press <strong>Submit translations</strong> to send your work
                     to the developer. Nothing goes live until they review it.
@@ -1454,22 +1825,33 @@ export default function TranslatorApp() {
               </ol>
               <div className="guide-tips">
                 <div className="guide-tip">
-                  <Undo2 size={15} /> Made a mistake? Press <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the <strong>Undo</strong>{' '}
-                  button) to bring back what you just changed. <kbd>Esc</kbd> clears the box you are in.
+                  <Undo2 size={15} />
+                  <span>
+                    Made a mistake? Press <kbd>Ctrl</kbd>+<kbd>Z</kbd> (or the <strong>Undo</strong> button) to bring
+                    back what you just changed. <kbd>Esc</kbd> clears the box you are in.
+                  </span>
                 </div>
                 <div className="guide-tip">
-                  <Check size={15} /> Use the <strong>Check</strong> button to mark a translation you are confident
-                  in. The tabs up top let you focus on what is <strong>To do</strong>.
+                  <Check size={15} />
+                  <span>
+                    Use the <strong>Check</strong> button to mark a translation you are confident in. The tabs up top
+                    let you focus on what is <strong>To do</strong>.
+                  </span>
                 </div>
                 <div className="guide-tip">
-                  <Flag size={15} /> Not sure about one? Hit <strong>Review</strong> to flag it. Flagged strings
-                  gather under a <strong>To review</strong> tab so someone can take a second look.
+                  <Flag size={15} />
+                  <span>
+                    Not sure about one? Hit <strong>Review</strong> to flag it. Flagged strings gather under a{' '}
+                    <strong>To review</strong> tab so someone can take a second look.
+                  </span>
                 </div>
                 <div className="guide-tip">
-                  <BookOpen size={15} /> Press <kbd>Tab</kbd> in any box to open a list of its tags and saved
-                  glossary words. Use <kbd>↑</kbd>/<kbd>↓</kbd> to pick, type to filter, <kbd>Enter</kbd> to insert,{' '}
-                  <kbd>Esc</kbd> to close. Open the <strong>Glossary</strong> to agree on how key words get
-                  translated so everyone stays consistent.
+                  <BookOpen size={15} />
+                  <span>
+                    Once your glossary has words in it, press <kbd>Tab</kbd> in any box to drop them in. The list shows
+                    that box's tags and your saved glossary words. Use <kbd>↑</kbd>/<kbd>↓</kbd> to pick, type to
+                    filter, <kbd>Enter</kbd> to insert, <kbd>Esc</kbd> to close.
+                  </span>
                 </div>
               </div>
             </div>
@@ -1485,6 +1867,81 @@ export default function TranslatorApp() {
   );
 }
 
+// A single in-app suggestion, shown above the translation box. "Use this" pulls
+// it into the saved value; "Dismiss" discards it. Holds its own busy/error state
+// so accepting one card never re-renders the rest of the catalog.
+function SuggestionCard({
+  suggestion,
+  onAccept,
+  onReject,
+}: {
+  suggestion: Suggestion;
+  onAccept: (suggestion: Suggestion) => Promise<string | null>;
+  onReject: (suggestion: Suggestion) => Promise<string | null>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const act = async (fn: (s: Suggestion) => Promise<string | null>) => {
+    setBusy(true);
+    setError('');
+    const message = await fn(suggestion);
+    // On success the card unmounts (the parent drops it), so only a failure path
+    // needs to restore the buttons.
+    if (message) {
+      setError(message);
+      setBusy(false);
+    }
+  };
+
+  const where = [suggestion.contextRoute, suggestion.appVersion ? `v${suggestion.appVersion}` : null]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div className="suggestion-card">
+      <div className="suggestion-head">
+        <Lightbulb size={13} />
+        <span className="suggestion-from">
+          Suggested by {suggestion.contributorName || 'a player'}
+        </span>
+        {where ? <span className="suggestion-where">{where}</span> : null}
+        {suggestion.stale ? (
+          <span className="suggestion-stale" title="The English text changed since this was suggested.">
+            <AlertTriangle size={12} /> source changed
+          </span>
+        ) : null}
+      </div>
+      <div className="suggestion-value" dir="auto">
+        {suggestion.value}
+      </div>
+      {error ? (
+        <div className="suggestion-error">
+          <AlertTriangle size={12} /> {error}
+        </div>
+      ) : null}
+      <div className="suggestion-actions">
+        <button
+          type="button"
+          className="btn btn-small btn-primary"
+          disabled={busy}
+          onClick={() => void act(onAccept)}
+        >
+          <Check size={13} /> Use this
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
+          disabled={busy}
+          onClick={() => void act(onReject)}
+        >
+          <X size={13} /> Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface TranslationRowProps {
   row: CatalogRow;
   value: string;
@@ -1492,7 +1949,11 @@ interface TranslationRowProps {
   saved: boolean;
   error?: string;
   activeLanguageName: string;
+  glossaryPrefill?: string;
   glossaryMatches: GlossaryTerm[];
+  suggestions: Suggestion[];
+  onAcceptSuggestion: (suggestion: Suggestion) => Promise<string | null>;
+  onRejectSuggestion: (suggestion: Suggestion) => Promise<string | null>;
   onChange: (key: string, value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => void;
   onBlur: (row: CatalogRow, value: string) => void;
@@ -1512,7 +1973,11 @@ const TranslationRow = memo(function TranslationRow({
   saved,
   error,
   activeLanguageName,
+  glossaryPrefill,
   glossaryMatches,
+  suggestions,
+  onAcceptSuggestion,
+  onRejectSuggestion,
   onChange,
   onKeyDown,
   onBlur,
@@ -1523,6 +1988,9 @@ const TranslationRow = memo(function TranslationRow({
 }: TranslationRowProps) {
   const live = checkPlaceholders(row.source, value);
   const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
+  // The box holds a glossary suggestion the translator has not accepted or
+  // changed yet (no saved value, text still equals the prefill).
+  const isPrefill = !!glossaryPrefill && value === glossaryPrefill && !row.value.trim();
   const reviewed = row.status === 'reviewed';
   const needsReview = row.needsReview;
   const meta = statusMeta(row.status, flagged, needsReview);
@@ -1603,6 +2071,18 @@ const TranslationRow = memo(function TranslationRow({
         <span className="trow-en-text">{row.source}</span>
         <span className={`badge ${meta.cls}`}>{meta.label}</span>
       </div>
+      {suggestions.length > 0 ? (
+        <div className="trow-suggestions">
+          {suggestions.map((suggestion) => (
+            <SuggestionCard
+              key={suggestion.id}
+              suggestion={suggestion}
+              onAccept={onAcceptSuggestion}
+              onReject={onRejectSuggestion}
+            />
+          ))}
+        </div>
+      ) : null}
       {row.placeholders.length > 0 ? (
         <div className="trow-ph">
           <span className="trow-ph-label">Keep these (click, or press Tab):</span>
@@ -1638,10 +2118,18 @@ const TranslationRow = memo(function TranslationRow({
           ))}
         </div>
       ) : null}
+      {isPrefill ? (
+        <div className="trow-prefill-hint">
+          <BookOpen size={13} />
+          <span>
+            Filled in from your glossary. Press <kbd>Enter</kbd> to accept, or type over it.
+          </span>
+        </div>
+      ) : null}
       <div className="trow-input-wrap">
         <textarea
           id={`tx-${row.key}`}
-          className="trow-input"
+          className={`trow-input ${isPrefill ? 'trow-input--prefill' : ''}`}
           dir="auto"
           rows={1}
           placeholder={`Type the ${activeLanguageName || 'translation'} here`}

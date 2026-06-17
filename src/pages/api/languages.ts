@@ -23,7 +23,6 @@ export const POST: APIRoute = async ({ request }) => {
 
   const code = (body.code ?? '').trim();
   if (!isLanguageCode(code)) return badRequest('language code must be BCP 47 style, like es or pt-BR');
-  if (code.toLowerCase() === 'en') return badRequest('English is the source catalog, not a target language');
 
   const name = (body.name ?? '').trim() || displayNameForLanguage(code);
   await addLanguage(env.TRANSLATE_DB, code, name);

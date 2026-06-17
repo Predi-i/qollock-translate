@@ -25,9 +25,6 @@ export async function ensureLiveLanguage(db: D1Database, languageCode: string): 
   if (!isLanguageCode(languageCode)) {
     return badRequest('language code must be BCP 47 style, like es or pt-BR');
   }
-  if (languageCode.toLowerCase() === 'en') {
-    return badRequest('English is the source catalog, not a target language');
-  }
   await addLanguage(db, languageCode, displayNameForLanguage(languageCode));
   return null;
 }

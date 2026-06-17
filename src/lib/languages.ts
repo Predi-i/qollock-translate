@@ -13,6 +13,7 @@ export interface LanguageOption {
 // by typing a BCP 47 code (the picker offers a custom option, and the flag is
 // derived from the region subtag when present).
 export const COMMON_LANGUAGES: LanguageOption[] = [
+  { code: 'en', name: 'English', native: 'English', flag: '🇬🇧' },
   { code: 'es', name: 'Spanish', native: 'Espanol', flag: '🇪🇸' },
   { code: 'pt-BR', name: 'Portuguese (Brazil)', native: 'Portugues (Brasil)', flag: '🇧🇷' },
   { code: 'pt', name: 'Portuguese', native: 'Portugues', flag: '🇵🇹' },
