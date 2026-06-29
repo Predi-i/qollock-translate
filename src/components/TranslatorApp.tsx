@@ -305,6 +305,14 @@ export default function TranslatorApp() {
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // Submit flow. 'pending' is the brief cancel window before the PR is actually
+  // created; 'submitting' is the live API call. The PR opens in a popup-blocked
+  // world, so instead of auto-opening a tab we surface a success banner with a
+  // link the translator clicks themselves.
+  const [submitPhase, setSubmitPhase] = useState<'idle' | 'pending' | 'submitting'>('idle');
+  const [submitCountdown, setSubmitCountdown] = useState(0);
+  const [prResult, setPrResult] = useState<{ url: string; number: number; updatedExisting: boolean } | null>(null);
+  const submitTimers = useRef<{ interval?: number; timeout?: number }>({});
   // Upload merge mode: when true, an uploaded file only fills blank strings and
   // never overwrites an existing translation. On by default (the safe choice).
   const [importFillEmptyOnly, setImportFillEmptyOnly] = useState(true);
@@ -406,7 +414,15 @@ export default function TranslatorApp() {
     }
   }
 
+  // Drop any armed submit when the unmount happens or the language changes, so a
+  // pending countdown never fires against the wrong (or a gone) language.
+  useEffect(() => () => clearSubmitTimers(), []);
+
   useEffect(() => {
+    clearSubmitTimers();
+    setSubmitPhase('idle');
+    setSubmitCountdown(0);
+    setPrResult(null);
     if (selectedLanguage) {
       void loadCatalog(selectedLanguage);
       void loadGlossary(selectedLanguage);
@@ -704,9 +720,44 @@ export default function TranslatorApp() {
   }, []);
   performUndoRef.current = performUndo;
 
-  async function createPullRequest() {
-    if (!selectedLanguage) return;
-    setBusy('pr');
+  function clearSubmitTimers() {
+    if (submitTimers.current.interval) window.clearInterval(submitTimers.current.interval);
+    if (submitTimers.current.timeout) window.clearTimeout(submitTimers.current.timeout);
+    submitTimers.current = {};
+  }
+
+  // Step 1: arm the submit. Nothing is sent yet — the translator gets a few
+  // seconds to back out before the PR is opened.
+  function startSubmit() {
+    if (!selectedLanguage || submitPhase !== 'idle') return;
+    setError('');
+    setMessage('');
+    setPrResult(null);
+    setSubmitPhase('pending');
+    setSubmitCountdown(5);
+    clearSubmitTimers();
+    submitTimers.current.interval = window.setInterval(() => {
+      setSubmitCountdown((n) => (n > 1 ? n - 1 : 0));
+    }, 1000);
+    submitTimers.current.timeout = window.setTimeout(() => void runSubmit(), 5000);
+  }
+
+  function cancelSubmit() {
+    clearSubmitTimers();
+    setSubmitPhase('idle');
+    setSubmitCountdown(0);
+    setMessage('Submit cancelled — nothing was sent.');
+  }
+
+  // Step 2: actually open the PR. Reached either when the countdown elapses or
+  // when the translator clicks "Send now".
+  async function runSubmit() {
+    clearSubmitTimers();
+    if (!selectedLanguage) {
+      setSubmitPhase('idle');
+      return;
+    }
+    setSubmitPhase('submitting');
     setError('');
     setMessage('');
     try {
@@ -714,12 +765,15 @@ export default function TranslatorApp() {
         method: 'POST',
         body: JSON.stringify({ languageCode: selectedLanguage }),
       });
-      setMessage(`PR #${result.pullRequest.number}: ${result.pullRequest.url}`);
-      window.open(result.pullRequest.url, '_blank', 'noopener');
+      setPrResult({
+        url: result.pullRequest.url,
+        number: result.pullRequest.number,
+        updatedExisting: result.pullRequest.updatedExisting,
+      });
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setBusy('');
+      setSubmitPhase('idle');
     }
   }
 
@@ -1209,7 +1263,6 @@ export default function TranslatorApp() {
   const exportHref = selectedLanguage ? `/api/export?lang=${encodeURIComponent(selectedLanguage)}` : '#';
   const activeLanguage = languages.find((l) => l.code === selectedLanguage);
   const activeLanguageName = activeLanguage?.name ?? selectedLanguage;
-  const prUrl = message.startsWith('PR #') ? message.split(': ').slice(1).join(': ') : '';
 
   return (
     <div className="shell">
@@ -1463,14 +1516,31 @@ export default function TranslatorApp() {
               </button>
               .
             </p>
-            {error || prUrl ? (
-              <div className={`banner ${error ? 'banner-error' : ''}`}>
-                <span>{error || message}</span>
-                {prUrl ? (
-                  <a className="banner-link" href={prUrl} target="_blank" rel="noopener">
-                    <ExternalLink size={14} /> Open PR
-                  </a>
-                ) : null}
+            {error ? (
+              <div className="banner banner-error">
+                <AlertTriangle size={14} />
+                <span>{error}</span>
+              </div>
+            ) : null}
+            {prResult ? (
+              <div className="banner banner-success">
+                <Check size={15} />
+                <span>
+                  {prResult.updatedExisting
+                    ? `Updated your open pull request (PR #${prResult.number}).`
+                    : `Submitted! Pull request #${prResult.number} is open for review.`}
+                </span>
+                <a className="banner-link" href={prResult.url} target="_blank" rel="noopener">
+                  <ExternalLink size={14} /> Open PR
+                </a>
+                <button className="banner-x" type="button" title="Dismiss" onClick={() => setPrResult(null)}>
+                  <X size={14} />
+                </button>
+              </div>
+            ) : null}
+            {message && !error ? (
+              <div className="banner">
+                <span>{message}</span>
               </div>
             ) : null}
           </div>
@@ -1538,16 +1608,34 @@ export default function TranslatorApp() {
                 Undo import ({lastImportBatch.rowCount})
               </button>
             )}
-            <button
-              className="btn btn-primary file-bar-submit"
-              type="button"
-              title="Send your translations to the developer for review"
-              disabled={!!busy || !selectedLanguage || !catalog?.stats.completed}
-              onClick={() => void createPullRequest()}
-            >
-              <GitPullRequest size={16} />
-              Submit translations
-            </button>
+            <div className="submit-cluster">
+              {submitPhase === 'pending' ? (
+                <>
+                  <span className="submit-countdown" aria-live="polite">
+                    <RefreshCw size={14} className="spin" />
+                    Sending in {submitCountdown}s…
+                  </span>
+                  <button className="btn" type="button" title="Open the pull request now" onClick={() => void runSubmit()}>
+                    Send now
+                  </button>
+                  <button className="btn btn-cancel" type="button" title="Don't send" onClick={cancelSubmit}>
+                    <X size={16} />
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  title="Send your translations to the developer for review"
+                  disabled={!!busy || submitPhase === 'submitting' || !selectedLanguage || !catalog?.stats.completed}
+                  onClick={startSubmit}
+                >
+                  <GitPullRequest size={16} />
+                  {submitPhase === 'submitting' ? 'Submitting…' : 'Submit translations'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="segmented" role="tablist" aria-label="String filters">

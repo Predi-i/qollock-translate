@@ -305,9 +305,41 @@ textarea:focus-visible {
   padding: 4px 4px 12px;
 }
 
-/* Push the primary action to the far end; on wrap it stays end-aligned. */
-.file-bar-submit {
+/* Push the submit controls to the far end; on wrap they stay end-aligned. */
+.submit-cluster {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.submit-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+.btn-cancel {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+
+.btn-cancel:hover {
+  border-color: rgba(239, 68, 68, 0.7);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .segmented {
@@ -1002,14 +1034,25 @@ kbd {
 }
 
 .banner span {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.banner > svg {
+  flex-shrink: 0;
+}
+
 .banner-error {
   border-color: rgba(239, 68, 68, 0.45);
   color: #fca5a5;
+}
+
+.banner-success {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-panel-2));
+  color: #86efac;
 }
 
 .banner-link {
@@ -1018,6 +1061,27 @@ kbd {
   gap: 5px;
   color: var(--color-accent-2);
   flex-shrink: 0;
+  font-weight: 650;
+}
+
+.banner-success .banner-link {
+  color: #86efac;
+  text-decoration: underline;
+}
+
+.banner-x {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 2px;
+}
+
+.banner-x:hover {
+  opacity: 1;
 }
 
 .trow {
