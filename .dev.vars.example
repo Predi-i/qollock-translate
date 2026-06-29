@@ -7,11 +7,14 @@
 
 CF_ACCESS_TEAM=
 CF_ACCESS_AUD=
-TRANSLATOR_EMAIL=local-dev@grimoire
-GRIMOIRE_SOCIAL_BASE_URL=http://localhost:8787
+TRANSLATOR_EMAIL=local-dev@example
+
+# Optional: base URL of a social backend for the in-client suggestion loop
+# (/api/live/*). Leave unset to disable that feature.
+SOCIAL_BASE_URL=http://localhost:8787
 
 # Fine-grained GitHub PAT for PR creation.
-# Required scopes/permissions on Slush97/grimoire:
+# Required permissions on your target repo (GITHUB_REPO):
 #   Contents: Read and write
 #   Pull requests: Read and write
 GITHUB_TOKEN=

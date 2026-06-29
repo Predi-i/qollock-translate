@@ -26,7 +26,7 @@ type Env = {
   CF_ACCESS_TEAM: string;
   CF_ACCESS_AUD: string;
   TRANSLATOR_EMAIL?: string;
-  GRIMOIRE_SOCIAL_BASE_URL?: string;
+  SOCIAL_BASE_URL?: string;
 };
 
 declare module 'cloudflare:workers' {

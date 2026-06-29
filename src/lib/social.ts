@@ -1,7 +1,5 @@
 import { json } from './http';
 
-const DEFAULT_SOCIAL_BASE_URL = 'https://grimoire-social.slusheliott.workers.dev';
-
 export interface SocialUser {
   id: string;
   displayName: string;
@@ -10,14 +8,19 @@ export interface SocialUser {
 
 export async function requireSocialUser(
   request: Request,
-  env: { GRIMOIRE_SOCIAL_BASE_URL?: string }
+  env: { SOCIAL_BASE_URL?: string }
 ): Promise<SocialUser | Response> {
+  // The in-client suggestion loop is optional. Without a social backend wired
+  // up, the /api/live/* endpoints are inert rather than pointing somewhere else.
+  const baseUrl = env.SOCIAL_BASE_URL?.replace(/\/+$/, '');
+  if (!baseUrl) {
+    return json({ error: 'suggestion loop is not configured' }, { status: 501 });
+  }
+
   const authorization = request.headers.get('Authorization');
   if (!authorization?.startsWith('Bearer ')) {
     return json({ error: 'authentication required' }, { status: 401 });
   }
-
-  const baseUrl = (env.GRIMOIRE_SOCIAL_BASE_URL || DEFAULT_SOCIAL_BASE_URL).replace(/\/+$/, '');
   let response: Response;
   try {
     response = await fetch(`${baseUrl}/v1/me`, {
@@ -28,7 +31,7 @@ export async function requireSocialUser(
     });
   } catch (err) {
     return json(
-      { error: `could not reach Grimoire Social: ${(err as Error).message}` },
+      { error: `could not reach the social backend: ${(err as Error).message}` },
       { status: 502 }
     );
   }
@@ -37,12 +40,12 @@ export async function requireSocialUser(
     return json({ error: 'authentication required' }, { status: 401 });
   }
   if (!response.ok) {
-    return json({ error: `Grimoire Social returned ${response.status}` }, { status: 502 });
+    return json({ error: `the social backend returned ${response.status}` }, { status: 502 });
   }
 
   const body = await safeJson(response);
   const user = readSocialUser(body);
-  if (!user) return json({ error: 'Grimoire Social returned an invalid user' }, { status: 502 });
+  if (!user) return json({ error: 'the social backend returned an invalid user' }, { status: 502 });
   return user;
 }
 

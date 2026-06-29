@@ -16,7 +16,9 @@
   "vars": {
     "GITHUB_REPO": "Slush97/grimoire",
     "GITHUB_BRANCH": "main",
-    "GRIMOIRE_SOCIAL_BASE_URL": "https://grimoire-social.slusheliott.workers.dev"
+    // Optional: base URL of a social backend that authenticates the in-client
+    // suggestion loop (/api/live/*). Omit to disable that feature.
+    "SOCIAL_BASE_URL": "https://grimoire-social.slusheliott.workers.dev"
   },
   "kv_namespaces": [
     {

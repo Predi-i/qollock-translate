@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { isLockedGlossaryTerm, lockedGlossaryNote, SHORT_GLOSSARY_TERMS } from '../lib/glossary';
 import { COMMON_LANGUAGES, flagForCode, sectionForKey, type SectionMeta } from '../lib/languages';
+import { SITE } from '../site.config';
 
 type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
 type Filter = 'open' | 'flagged' | 'done' | 'checked' | 'review' | 'suggested' | 'all';
@@ -139,77 +140,7 @@ const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
 const GLOSSARY_OPEN_KEY = 'gt.glossaryOpen.v1';
 const EMPTY_GLOSSARY_MATCHES: GlossaryTerm[] = [];
 const EMPTY_SUGGESTIONS: Suggestion[] = [];
-const PRIORITY_GLOSSARY_TERMS = [
-  'Grimoire',
-  'Deadlock',
-  'Deadworks',
-  'GameBanana',
-  'Steam',
-  'Discord',
-  'Statlocker',
-  'mod',
-  'mods',
-  'mod manager',
-  'profile',
-  'profiles',
-  'portable profile',
-  'share code',
-  'game path',
-  'addon',
-  'addons',
-  'VPK',
-  'GLB',
-  'gameinfo.gi',
-  '.vpk',
-  '.glb',
-  '.modprofile.json',
-  'mp1:',
-  'autoexec',
-  'autoexec.cfg',
-  'crosshair',
-  'locker',
-  'Locker',
-  'Browse',
-  'Discover',
-  'Installed',
-  'Conflicts',
-  'server',
-  'servers',
-  'relay',
-  'download',
-  'import',
-  'export',
-  'publish',
-  'snapshot',
-  'restore',
-  'update',
-  'variant',
-  'variants',
-  'merge',
-  'unmerge',
-  'load order',
-  'override',
-  'overrides',
-  'cache',
-  'NSFW',
-  'hero',
-  'heroes',
-  'hero card',
-  'ability',
-  'abilities',
-  'soul container',
-  'skin',
-  'skins',
-  'VFX',
-  'HUD',
-  'UI',
-  'FPS',
-  'ADS',
-  'MMR',
-  'replay key',
-  'match key',
-  'Launch Modded',
-];
+const PRIORITY_GLOSSARY_TERMS = SITE.priorityGlossaryTerms;
 const GLOSSARY_STOPWORDS = new Set([
   'a',
   'about',
@@ -1263,9 +1194,9 @@ export default function TranslatorApp() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark">GT</div>
+          <div className="brand-mark">{SITE.shortName}</div>
           <div>
-            <div className="brand-title">Grimoire Translate</div>
+            <div className="brand-title">{SITE.appName}</div>
             <div className="brand-subtitle">{email || 'Loading account'}</div>
           </div>
         </div>
@@ -1333,7 +1264,7 @@ export default function TranslatorApp() {
                 <div>
                   <div className="section-title">Contributors</div>
                   <div className="admin-subtitle">
-                    Steam users appear here after they enter Translation Mode in Grimoire.
+                    Steam users appear here after they enter Translation Mode in {SITE.clientName}.
                   </div>
                 </div>
                 <button className="btn" type="button" disabled={!!busy} onClick={() => void loadContributors()}>
@@ -1519,7 +1450,7 @@ export default function TranslatorApp() {
               <span>
                 <strong>Set up your glossary first.</strong>{' '}
                 {glossaryCandidates.length > 0
-                  ? `We found ${glossaryCandidates.length} words that repeat across Grimoire. Agree on how each one is translated once, and the app suggests it everywhere, so you stay consistent and type less.`
+                  ? `We found ${glossaryCandidates.length} words that repeat across ${SITE.clientName}. Agree on how each one is translated once, and the app suggests it everywhere, so you stay consistent and type less.`
                   : 'Agree on how key words are translated once, and the app suggests them everywhere, so you stay consistent and type less.'}{' '}
                 Open it to get started.
               </span>
@@ -1765,12 +1696,12 @@ export default function TranslatorApp() {
             className="modal modal--guide"
             role="dialog"
             aria-modal="true"
-            aria-label="How to translate Grimoire"
+            aria-label={`How to translate ${SITE.clientName}`}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="modal-head">
               <div className="modal-title">
-                <Lightbulb size={18} /> How to translate Grimoire
+                <Lightbulb size={18} /> How to translate {SITE.clientName}
               </div>
               <button className="picker-x" type="button" title="Close" onClick={dismissTutorial}>
                 <X size={18} />
@@ -1778,7 +1709,7 @@ export default function TranslatorApp() {
             </div>
             <div className="guide-body">
               <p className="guide-lead">
-                Thanks for helping translate Grimoire. You do not need to be a developer. Here is the whole job in
+                Thanks for helping translate {SITE.clientName}. You do not need to be a developer. Here is the whole job in
                 five steps.
               </p>
               <ol className="guide-steps">
@@ -1793,7 +1724,7 @@ export default function TranslatorApp() {
                   <span className="guide-step-num">2</span>
                   <div>
                     <strong>Set up your glossary first.</strong> Open the <strong>Glossary</strong> and you will see the
-                    words that come up again and again across Grimoire, already gathered for you. Agree on how each one
+                    words that come up again and again across {SITE.clientName}, already gathered for you. Agree on how each one
                     is translated once, and the app suggests it everywhere, so your work stays consistent and you type
                     less. This is the step that saves the most time, so it is worth doing before you dive in.
                   </div>
