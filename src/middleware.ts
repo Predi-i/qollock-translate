@@ -1,26 +1,43 @@
 import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
-import { verifyAccessJwt } from './lib/access';
+import { getSession } from './lib/auth';
 
+// Auth gate. Translators sign in with GitHub (see src/lib/auth.ts); the session
+// lives in KV and is keyed by the `ql_session` cookie. Unauthenticated page
+// loads are redirected to /login; unauthenticated API calls get a 401 JSON so
+// the client can surface the error without a redirect dance.
 export const onRequest = defineMiddleware(async (ctx, next) => {
   const url = new URL(ctx.request.url);
-  if (url.pathname.startsWith('/api/live/')) {
+  const path = url.pathname;
+
+  // Public surfaces: the in-client suggestion API, the OAuth dance, the login
+  // page, and static assets must all be reachable without a session.
+  if (
+    path.startsWith('/api/live/') ||
+    path.startsWith('/auth/') ||
+    path === '/login' ||
+    path.startsWith('/_')
+  ) {
     return next();
   }
 
+  // Local dev: skip OAuth entirely and run as a fixed identity.
   if (import.meta.env.DEV) {
     ctx.locals.translatorEmail = env.TRANSLATOR_EMAIL || 'local-dev@qollock';
     return next();
   }
 
-  const result = await verifyAccessJwt(ctx.request, env);
-  if ('error' in result) {
-    return new Response(JSON.stringify({ error: result.error }), {
-      status: result.status,
-      headers: { 'Content-Type': 'application/json' },
-    });
+  const session = await getSession(env.SESSION, ctx.request);
+  if (!session) {
+    if (path.startsWith('/api/')) {
+      return new Response(JSON.stringify({ error: 'not signed in' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(null, { status: 302, headers: { Location: '/login' } });
   }
 
-  ctx.locals.translatorEmail = result.email;
+  ctx.locals.translatorEmail = session.email;
   return next();
 });
