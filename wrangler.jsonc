@@ -2,6 +2,9 @@
   "compatibility_date": "2026-05-16",
   "compatibility_flags": ["global_fetch_strictly_public"],
   "name": "qollock-translate",
+  // Serve the worker at qollock-translate.<account>.workers.dev. Without this the
+  // deploy aborts with "register a workers.dev subdomain" when no custom route is set.
+  "workers_dev": true,
   "main": "@astrojs/cloudflare/entrypoints/server",
   "assets": {
     "directory": "./dist",
