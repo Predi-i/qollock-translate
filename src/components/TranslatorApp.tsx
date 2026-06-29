@@ -1488,34 +1488,115 @@ export default function TranslatorApp() {
         </aside>
 
         <section className="list-pane">
-          <div className="section">
-            <div className="search-row">
-              <div className="field">
-                <label className="label" htmlFor="search">
-                  Search strings
-                </label>
+          <div className="list-head">
+            <div className="list-toolbar">
+              <div className="search-field">
+                <Search size={15} />
                 <input
                   id="search"
-                  className="input"
-                  placeholder="Find a word or phrase"
+                  className="search-input"
+                  placeholder="Search strings…"
+                  aria-label="Search strings"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
+                {query ? (
+                  <button className="search-clear" type="button" title="Clear search" onClick={() => setQuery('')}>
+                    <X size={14} />
+                  </button>
+                ) : null}
               </div>
-              <button className="btn btn-icon" type="button" title="Search">
-                <Search size={16} />
-              </button>
+              <div className="submit-cluster">
+                {submitPhase === 'pending' ? (
+                  <>
+                    <span className="submit-countdown" aria-live="polite">
+                      <RefreshCw size={14} className="spin" />
+                      Sending in {submitCountdown}s…
+                    </span>
+                    <button className="btn" type="button" title="Open the pull request now" onClick={() => void runSubmit()}>
+                      Send now
+                    </button>
+                    <button className="btn btn-cancel" type="button" title="Don't send" onClick={cancelSubmit}>
+                      <X size={16} />
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    title="Send your translations to the developer for review"
+                    disabled={!!busy || submitPhase === 'submitting' || !selectedLanguage || !catalog?.stats.completed}
+                    onClick={startSubmit}
+                  >
+                    <GitPullRequest size={16} />
+                    {submitPhase === 'submitting' ? 'Submitting…' : 'Submit translations'}
+                  </button>
+                )}
+              </div>
             </div>
-            <p className="help-text">
-              Type each translation{activeLanguage ? ` in ${activeLanguageName}` : ''} in the box under the English.{' '}
-              <kbd>Enter</kbd> saves and jumps to the next, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line,{' '}
-              <kbd>↑</kbd>/<kbd>↓</kbd> move between boxes, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes the last save. Leave
-              anything inside {'{{double braces}}'} unchanged.{' '}
-              <button type="button" className="link-btn" onClick={() => setShowHelp(true)}>
-                Open the full guide
+
+            <div className="list-actions">
+              <span className="list-actions-label">File</span>
+              <a className="btn btn-ghost" href={exportHref} title="Download this language as a file">
+                <Download size={16} />
+                Download
+              </a>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  // Reset so picking the same file again still fires onChange.
+                  e.target.value = '';
+                  if (file) void importCatalogFile(file);
+                }}
+              />
+              <button
+                className="btn btn-ghost"
+                type="button"
+                title="Upload an edited language file to load your translations"
+                disabled={!!busy || !selectedLanguage}
+                onClick={() => importInputRef.current?.click()}
+              >
+                <Upload size={16} />
+                Upload
               </button>
-              .
+              <label
+                className="import-toggle"
+                title="When on, an upload only fills blank strings and never overwrites an existing translation"
+              >
+                <input
+                  type="checkbox"
+                  checked={importFillEmptyOnly}
+                  onChange={(e) => setImportFillEmptyOnly(e.target.checked)}
+                />
+                Only fill blanks
+              </label>
+              {lastImportBatch && (
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  title="Roll back the most recent upload. Strings you have edited by hand since then are kept."
+                  disabled={!!busy}
+                  onClick={() => void undoLastImport()}
+                >
+                  <Undo2 size={16} />
+                  Undo import ({lastImportBatch.rowCount})
+                </button>
+              )}
+            </div>
+
+            <p className="help-text">
+              <kbd>Enter</kbd> saves · <kbd>Tab</kbd> inserts tags &amp; glossary · <kbd>↑</kbd>/<kbd>↓</kbd> move ·{' '}
+              <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes. Keep anything inside {'{{double braces}}'}.{' '}
+              <button type="button" className="link-btn" onClick={() => setShowHelp(true)}>
+                Full guide
+              </button>
             </p>
+
             {error ? (
               <div className="banner banner-error">
                 <AlertTriangle size={14} />
@@ -1557,86 +1638,6 @@ export default function TranslatorApp() {
               </span>
             </button>
           ) : null}
-
-          <div className="file-bar">
-            <a className="btn btn-secondary" href={exportHref} title="Download this language as a file">
-              <Download size={16} />
-              Download
-            </a>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json,.json"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                // Reset so picking the same file again still fires onChange.
-                e.target.value = '';
-                if (file) void importCatalogFile(file);
-              }}
-            />
-            <button
-              className="btn btn-secondary"
-              type="button"
-              title="Upload an edited language file to load your translations"
-              disabled={!!busy || !selectedLanguage}
-              onClick={() => importInputRef.current?.click()}
-            >
-              <Upload size={16} />
-              Upload
-            </button>
-            <label
-              className="import-toggle"
-              title="When on, an upload only fills blank strings and never overwrites an existing translation"
-            >
-              <input
-                type="checkbox"
-                checked={importFillEmptyOnly}
-                onChange={(e) => setImportFillEmptyOnly(e.target.checked)}
-              />
-              Only fill blanks
-            </label>
-            {lastImportBatch && (
-              <button
-                className="btn btn-secondary"
-                type="button"
-                title="Roll back the most recent upload. Strings you have edited by hand since then are kept."
-                disabled={!!busy}
-                onClick={() => void undoLastImport()}
-              >
-                <Undo2 size={16} />
-                Undo import ({lastImportBatch.rowCount})
-              </button>
-            )}
-            <div className="submit-cluster">
-              {submitPhase === 'pending' ? (
-                <>
-                  <span className="submit-countdown" aria-live="polite">
-                    <RefreshCw size={14} className="spin" />
-                    Sending in {submitCountdown}s…
-                  </span>
-                  <button className="btn" type="button" title="Open the pull request now" onClick={() => void runSubmit()}>
-                    Send now
-                  </button>
-                  <button className="btn btn-cancel" type="button" title="Don't send" onClick={cancelSubmit}>
-                    <X size={16} />
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <button
-                  className="btn btn-primary"
-                  type="button"
-                  title="Send your translations to the developer for review"
-                  disabled={!!busy || submitPhase === 'submitting' || !selectedLanguage || !catalog?.stats.completed}
-                  onClick={startSubmit}
-                >
-                  <GitPullRequest size={16} />
-                  {submitPhase === 'submitting' ? 'Submitting…' : 'Submit translations'}
-                </button>
-              )}
-            </div>
-          </div>
 
           <div className="segmented" role="tablist" aria-label="String filters">
             {([
