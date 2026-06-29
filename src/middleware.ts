@@ -9,7 +9,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
   }
 
   if (import.meta.env.DEV) {
-    ctx.locals.translatorEmail = env.TRANSLATOR_EMAIL || 'local-dev@grimoire';
+    ctx.locals.translatorEmail = env.TRANSLATOR_EMAIL || 'local-dev@qollock';
     return next();
   }
 

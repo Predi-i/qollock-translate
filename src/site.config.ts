@@ -5,87 +5,56 @@
 
 export const SITE = {
   // This workbench's own name. Shows in the browser title and the header.
-  appName: 'Grimoire Translate',
+  appName: 'QOLLOCK Translate',
   // Short badge shown in the header mark (2-3 letters).
-  shortName: 'GT',
+  shortName: 'QT',
   // Public URL of this workbench. Referenced in the PR descriptions it opens.
-  url: 'https://translate.grimoiremods.com',
+  // TODO: set to the real custom domain (or the *.workers.dev URL) after deploy.
+  url: 'https://translate.qollock.example',
   // The end-user application whose strings you are translating. Used in UI copy
-  // like "...words that repeat across Grimoire" and "enter Translation Mode in
-  // Grimoire".
-  clientName: 'Grimoire',
+  // like "...words that repeat across QOLLOCK".
+  clientName: 'QOLLOCK',
+  // Repo-relative directory holding the i18next catalogs the workbench reads
+  // (`en/translation.json`) and writes PRs against (`<lang>/translation.json`).
+  // Upstream hardcoded `src/locales`; QOLLOCK keeps them under `translations/`,
+  // produced by scripts/export_locales_json.js. No leading or trailing slash.
+  localesPath: 'translations/locales',
   // Brand/product nouns that usually should NOT be translated. The glossary
   // helper surfaces these first so translators agree on (or skip) them up front.
-  // Purely domain content — replace with your own project's terms.
+  // QOLLOCK domain nouns — proper names, healthbar styles, minigames, and the
+  // engine/UI acronyms that stay Latin. (Walker/Guardian/Base ARE translated, so
+  // they are deliberately omitted.)
   priorityGlossaryTerms: [
-    'Grimoire',
+    // Mod + community
+    'QOLLOCK',
+    'MOG',
+    'MOGLOCK',
+    'moglock.gg',
     'Deadlock',
-    'Deadworks',
-    'GameBanana',
     'Steam',
     'Discord',
+    'GameBanana',
     'Statlocker',
     'mod',
     'mods',
-    'mod manager',
-    'profile',
-    'profiles',
-    'portable profile',
-    'share code',
-    'game path',
-    'addon',
-    'addons',
     'VPK',
-    'GLB',
-    'gameinfo.gi',
-    '.vpk',
-    '.glb',
-    '.modprofile.json',
-    'mp1:',
-    'autoexec',
-    'autoexec.cfg',
-    'crosshair',
-    'locker',
-    'Locker',
-    'Browse',
-    'Discover',
-    'Installed',
-    'Conflicts',
-    'server',
-    'servers',
-    'relay',
-    'download',
-    'import',
-    'export',
-    'publish',
-    'snapshot',
-    'restore',
-    'update',
-    'variant',
-    'variants',
-    'merge',
-    'unmerge',
-    'load order',
-    'override',
-    'overrides',
-    'cache',
-    'NSFW',
-    'hero',
-    'heroes',
-    'hero card',
-    'ability',
-    'abilities',
-    'soul container',
-    'skin',
-    'skins',
-    'VFX',
+    // Feature / subsystem proper names
+    'Deadlock For Dummies',
+    'Rejuvenator',
+    'Citadel',
+    // Healthbar styles
+    'Minecraft',
+    'Budhud',
+    "Klutz's Bar",
+    // Minigames
+    'Bebop Sweeper',
+    // Engine / UI acronyms
     'HUD',
     'UI',
     'FPS',
-    'ADS',
     'MMR',
-    'replay key',
-    'match key',
-    'Launch Modded',
+    'SPM',
+    'HP',
+    'crosshair',
   ],
 } as const;

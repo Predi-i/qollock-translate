@@ -1,40 +1,43 @@
 {
   "compatibility_date": "2026-05-16",
   "compatibility_flags": ["global_fetch_strictly_public"],
-  "name": "grimoire-translate",
+  "name": "qollock-translate",
   "main": "@astrojs/cloudflare/entrypoints/server",
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS"
   },
-  "routes": [
-    { "pattern": "translate.grimoiremods.com", "custom_domain": true }
-  ],
+  // Optional custom domain. Until you own one, deploy ships at
+  // https://qollock-translate.<your-subdomain>.workers.dev — delete this route
+  // and `SITE.url` stays a TODO. To use a real domain, add it in Cloudflare and
+  // uncomment with your hostname.
+  // "routes": [
+  //   { "pattern": "translate.example.com", "custom_domain": true }
+  // ],
   "observability": {
     "enabled": true
   },
   "vars": {
-    "GITHUB_REPO": "Slush97/grimoire",
-    "GITHUB_BRANCH": "main",
-    // Optional: base URL of a social backend that authenticates the in-client
-    // suggestion loop (/api/live/*). Omit to disable that feature.
-    "SOCIAL_BASE_URL": "https://grimoire-social.slusheliott.workers.dev"
+    "GITHUB_REPO": "civo7/QOLLOCK",
+    "GITHUB_BRANCH": "main"
+    // SOCIAL_BASE_URL (upstream's in-client suggestion loop) intentionally
+    // omitted — QOLLOCK has no social backend, so that feature stays disabled.
   },
+  // Create with:  pnpm exec wrangler kv namespace create SESSION
+  // then paste the returned id below.
   "kv_namespaces": [
     {
       "binding": "SESSION",
-      "id": "dafbbb4647e346c59884416c0e2d2c19"
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
     }
   ],
-  // Create this with:
-  //   pnpm exec wrangler d1 create grimoire-translate
-  // then replace the placeholder database_id and run:
-  //   pnpm db:migrate:remote
+  // Create with:  pnpm exec wrangler d1 create qollock-translate
+  // then paste the returned database_id below and run:  pnpm db:migrate:remote
   "d1_databases": [
     {
       "binding": "TRANSLATE_DB",
-      "database_name": "grimoire-translate",
-      "database_id": "31a3de49-c84e-4000-b04a-9c33ada06476",
+      "database_name": "qollock-translate",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
       "migrations_dir": "migrations"
     }
   ]

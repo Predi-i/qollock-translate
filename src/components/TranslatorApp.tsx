@@ -76,7 +76,7 @@ interface Contributor {
   pending_suggestion_count: number;
 }
 
-// A pending translation suggested from inside the Grimoire client. `stale` means
+// A pending translation suggested from inside the client app. `stale` means
 // the English source changed since it was suggested, so it may no longer fit.
 interface Suggestion {
   id: string;

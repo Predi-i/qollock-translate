@@ -38,26 +38,14 @@ export function flattenValues(catalog: JsonObject | null): Map<string, string> {
   return new Map(flattenCatalog(catalog).map((entry) => [entry.key, entry.source]));
 }
 
+// QOLLOCK fork: keys are opaque English source sentences, and some are a dot-prefix of another
+// (e.g. "Ready" vs "Ready.", "Reset to default value" vs "Reset to default value."). Splitting on
+// "." would nest those and silently drop the shorter key, so we assign every key verbatim. The
+// locale files are therefore flat; flattenCatalog never recurses (no nested objects exist) and so
+// preserves the same keys on read. Upstream's path-nesting behaviour is intentionally dropped.
 export function unflattenValues(entries: Array<{ key: string; value: string }>): JsonObject {
   const root: JsonObject = {};
-
-  for (const entry of entries) {
-    const parts = entry.key.split('.');
-    let cursor = root;
-    for (let i = 0; i < parts.length; i += 1) {
-      const part = parts[i];
-      if (i === parts.length - 1) {
-        cursor[part] = entry.value;
-      } else {
-        const next = cursor[part];
-        if (!next || typeof next !== 'object' || Array.isArray(next)) {
-          cursor[part] = {};
-        }
-        cursor = cursor[part] as JsonObject;
-      }
-    }
-  }
-
+  for (const entry of entries) root[entry.key] = entry.value;
   return root;
 }
 

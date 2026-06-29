@@ -1,5 +1,5 @@
 {
-  "name": "grimoire-translate",
+  "name": "qollock-translate",
   "type": "module",
   "version": "0.0.1",
   "private": true,
@@ -13,8 +13,8 @@
     "deploy": "pnpm db:migrate:remote && pnpm build && wrangler deploy",
     "astro": "astro",
     "typecheck": "astro check",
-    "db:migrate:local": "wrangler d1 migrations apply grimoire-translate --local",
-    "db:migrate:remote": "wrangler d1 migrations apply grimoire-translate --remote",
+    "db:migrate:local": "wrangler d1 migrations apply qollock-translate --local",
+    "db:migrate:remote": "wrangler d1 migrations apply qollock-translate --remote",
     "generate-types": "wrangler types"
   },
   "dependencies": {

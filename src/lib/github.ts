@@ -67,7 +67,7 @@ export async function fetchCatalog(
   ref = env.GITHUB_BRANCH
 ): Promise<JsonObject | null> {
   const { owner, name } = splitRepo(env.GITHUB_REPO);
-  const path = urlPath(`src/locales/${languageCode}/translation.json`);
+  const path = urlPath(`${SITE.localesPath}/${languageCode}/translation.json`);
   const response = await githubFetch<GitHubContentResponse>(
     env,
     `/repos/${owner}/${name}/contents/${path}?ref=${encodeURIComponent(ref)}`
@@ -125,7 +125,7 @@ export async function createTranslationPullRequest(
   const { owner, name } = splitRepo(env.GITHUB_REPO);
   const base = env.GITHUB_BRANCH || 'main';
   const branch = `translations/${languageCode.replace(/[^A-Za-z0-9._-]/g, '-')}`;
-  const path = `src/locales/${languageCode}/translation.json`;
+  const path = `${SITE.localesPath}/${languageCode}/translation.json`;
 
   const baseRef = await githubFetch<GitRefResponse>(
     env,
