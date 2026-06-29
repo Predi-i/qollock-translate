@@ -25,7 +25,7 @@
     // https://<your-worker-url>/auth/callback, and paste the Client ID here.
     // The matching secret is NOT stored here — set it with:
     //   pnpm exec wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
-    "GITHUB_OAUTH_CLIENT_ID": "REPLACE_WITH_YOUR_OAUTH_CLIENT_ID"
+    "GITHUB_OAUTH_CLIENT_ID": "Ov23licf6JqecYgqY0sC"
     // Optional: restrict sign-in to specific GitHub logins (comma/space list).
     // Omit to let any GitHub account translate (PRs are reviewed before merge).
     // "ALLOWED_GITHUB_USERS": "Predi-i civo7"
