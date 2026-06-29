@@ -2155,19 +2155,31 @@ const TranslationRow = memo(function TranslationRow({
       {glossaryMatches.length > 0 ? (
         <div className="trow-glossary">
           <span className="trow-glossary-label">Glossary:</span>
-          {glossaryMatches.map((term) => (
-            <button
-              type="button"
-              className="glossary-chip"
-              key={term.sourceTerm}
-              title={term.notes || `Insert "${term.targetTerm}"`}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onInsertGlossaryTerm(row.key, term.targetTerm)}
-            >
-              <span className="glossary-chip-source">{term.sourceTerm}</span>
-              <span className="glossary-chip-target">{term.targetTerm}</span>
-            </button>
-          ))}
+          {glossaryMatches.map((term) => {
+            // "Keep" terms translate to themselves (brand nouns like Discord). The
+            // source -> target chip would just print the same word twice, so show a
+            // single "keep" chip instead.
+            const keep = term.sourceTerm.toLowerCase() === term.targetTerm.toLowerCase();
+            return (
+              <button
+                type="button"
+                className={`glossary-chip ${keep ? 'glossary-chip--keep' : ''}`}
+                key={term.sourceTerm}
+                title={term.notes || (keep ? `Keep "${term.sourceTerm}" as-is` : `Insert "${term.targetTerm}"`)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onInsertGlossaryTerm(row.key, term.targetTerm)}
+              >
+                {keep ? (
+                  <span className="glossary-chip-target">{term.targetTerm}</span>
+                ) : (
+                  <>
+                    <span className="glossary-chip-source">{term.sourceTerm}</span>
+                    <span className="glossary-chip-target">{term.targetTerm}</span>
+                  </>
+                )}
+              </button>
+            );
+          })}
         </div>
       ) : null}
       {isPrefill ? (

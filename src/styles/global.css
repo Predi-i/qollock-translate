@@ -1288,6 +1288,31 @@ kbd {
   margin-right: 6px;
 }
 
+/* "Keep as-is" terms: no source -> target arrow (it would repeat the word), and
+   a teal tint to read as "leave this untranslated". */
+.glossary-chip--keep {
+  border-color: rgba(20, 184, 166, 0.35);
+  background: rgba(20, 184, 166, 0.06);
+  color: #99f6e4;
+}
+
+.glossary-chip--keep:hover {
+  border-color: rgba(20, 184, 166, 0.65);
+  background: rgba(20, 184, 166, 0.14);
+}
+
+.glossary-chip--keep .glossary-chip-target {
+  color: #ccfbf1;
+}
+
+.glossary-chip--keep .glossary-chip-target::before {
+  content: "keep";
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #5eead4;
+}
+
 /* In-app suggestions surfaced above the translation box */
 .trow-suggestions {
   display: flex;
