@@ -1,207 +1,176 @@
-# Deploying qollock-translate
+# Deploying QOLLOCK Translate
 
-This fork of [grimoire-translate](https://github.com/Slush97/grimoire-translate)
-is the QOLLOCK translation workbench: a website where community members translate
-QOLLOCK's UI strings in the browser and the site opens a GitHub pull request with
-their work — no JavaScript or Git knowledge needed on their end.
+This is a one-time setup guide for maintainers. The workbench is a Cloudflare
+Worker (Workers + D1 + KV). Translators sign in with **GitHub OAuth**, and the
+site opens pull requests against the public
+[QOLLOCK-translations](https://github.com/Predi-i/QOLLOCK-translations) repo.
 
-It runs on **Cloudflare** (Workers + D1 + KV + Access). You only do this setup
-**once**. Everything below is copy-paste; where a value is yours to fill in it
-says so in CAPS.
+Because some networks can't reach Cloudflare's upload API directly, **deploys run
+from GitHub Actions** — you push, and GitHub deploys to Cloudflare for you.
 
 ---
 
 ## How the pieces fit together
 
 ```
-QOLLOCK repo (civo7/QOLLOCK)                 This fork (Predi-i/qollock-translate)
-  panorama/scripts/ql_settings.js   <─────┐    Cloudflare Worker (the website)
-    SETTINGS_RU_TEXT = {...}  ← canon      │      reads en source from GitHub
-        │  scripts/export_locales_json.js  │      stores drafts in D1
-        ▼                                  │      translators log in via Access
-  translations/locales/<lang>/             │
-    translation.json  ──────────────────►─┘──►  opens a PR back to civo7/QOLLOCK
-        ▲                                              │
-        └──── scripts/import_locales_json.js ◄─────────┘  (you merge the PR,
-              merges the PR back into the maps              then run import)
+civo7/QOLLOCK (private mod)          Predi-i/QOLLOCK-translations         qollock-translate (this site)
+  panorama/scripts/ql_settings.js       (public mirror)                    Cloudflare Worker
+    canonical JS string maps              locales/en/translation.json  ◄── reads English source
+        │  export_locales_json.js  ──┐    locales/<lang>/translation.json ◄─ writes PRs here
+        ▼                            │         ▲                              │
+  translations/locales/  ──sync────► │         └──────── PR ─────────── translators edit in browser
+        ▲                            │                                       (sign in with GitHub)
+        └── import_locales_json.js ◄─┘ (maintainer merges PR, imports, repacks VPK)
 ```
 
-The **JS maps in `ql_settings.js` stay the source of truth** (they compile into
-the VPK; Panorama can't read JSON at runtime). The JSON files under
-`translations/locales/` are only the exchange format the website reads and writes.
+The **JS maps in `ql_settings.js` are the source of truth** (they compile into the
+VPK; Panorama can't read JSON at runtime). The JSON files are just the exchange
+format the website reads and writes. The private→public mirror is automatic
+(`sync-translations.yml`); public→mod is a manual import + repack.
 
 ---
 
 ## Prerequisites
 
-- A Cloudflare account (free tier is fine to start).
-- Node 22+ and `pnpm` installed. (`npm i -g pnpm` if you don't have it.)
-- This fork cloned locally — you already have it at `D:\GitHub2\grimoire-translate`.
+- A Cloudflare account (free tier is fine).
+- Node 22+ and `pnpm` (`npm i -g pnpm`).
+- This repo cloned locally, and the [`gh`](https://cli.github.com/) CLI signed in
+  (`gh auth login`).
 
 ---
 
-## Step 0 — Publish the English source so the website can read it
-
-The website reads the English strings from **`civo7/QOLLOCK`**, path
-`translations/locales/en/translation.json`, on the branch named by
-`GITHUB_BRANCH` (set to `main` in `wrangler.jsonc`). So those files must exist on
-that branch first.
-
-From the **QOLLOCK** repo:
+## Step 1 — Create the Cloudflare resources
 
 ```sh
-cd /d/GitHub2/QOLLOCK
-node scripts/export_locales_json.js     # regenerate translations/locales/
-git add translations/locales scripts/export_locales_json.js scripts/import_locales_json.js
-git commit -m "Add i18next locale catalogs for the translation workbench"
-git push
-```
-
-For first testing you can point the site at the working branch instead of `main`
-by setting `"GITHUB_BRANCH": "feat/translation-workbench"` in `wrangler.jsonc`.
-Switch it back to `main` once the locale files are merged to main.
-
-> The PR token (Step 4) needs write access to `civo7/QOLLOCK`. You have admin on
-> that repo, so you can mint a fine-grained PAT for it.
-
----
-
-## Step 1 — Branding (already done)
-
-`src/site.config.ts` is already set for QOLLOCK (name, glossary nouns,
-`localesPath`). Nothing to do unless you want to tweak the app name or the
-glossary list. The public URL there (`SITE.url`) is a placeholder — update it
-after Step 6 once you know your real URL.
-
----
-
-## Step 2 — Log Wrangler into Cloudflare
-
-```sh
-cd /d/GitHub2/grimoire-translate
 pnpm install
-pnpm exec wrangler login
+pnpm exec wrangler login            # opens a browser to link your account
+
+pnpm exec wrangler d1 create qollock-translate     # prints a database_id
+pnpm exec wrangler kv namespace create SESSION      # prints a KV id
 ```
 
-A browser opens; approve the access. This links the CLI to your Cloudflare
-account.
+Paste the two ids into `wrangler.jsonc`:
+
+- D1 id → `d1_databases[0].database_id`
+- KV id → `kv_namespaces[0].id`
+
+> The account-level `*.workers.dev` subdomain is set once per Cloudflare account
+> (Workers & Pages → your subdomain). The site is served at
+> `qollock-translate.<your-subdomain>.workers.dev` because `workers_dev: true` is
+> set in `wrangler.jsonc`.
 
 ---
 
-## Step 3 — Create the D1 database and KV namespace
+## Step 2 — Create the GitHub OAuth App (translator login)
 
-```sh
-pnpm exec wrangler d1 create qollock-translate
-pnpm exec wrangler kv namespace create SESSION
-```
+At <https://github.com/settings/developers> → **New OAuth App**:
 
-Each command prints an id. Open `wrangler.jsonc` and paste them in, replacing the
-placeholders:
+- **Homepage URL:** `https://qollock-translate.<your-subdomain>.workers.dev`
+- **Authorization callback URL:**
+  `https://qollock-translate.<your-subdomain>.workers.dev/auth/callback`
 
-- D1 → `d1_databases[0].database_id` = `REPLACE_WITH_YOUR_D1_DATABASE_ID`
-- KV → `kv_namespaces[0].id` = `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`
+Register it, then copy:
 
-Then create the tables:
+- **Client ID** (`Ov23…`) → paste into `wrangler.jsonc` as `GITHUB_OAUTH_CLIENT_ID`
+  (it's public, safe to commit).
+- **Client secret** (long hex) → keep it for Step 4 (it's a secret, never commit).
 
-```sh
-pnpm db:migrate:remote
-```
-
-> If Wrangler complains it can't determine your account id, prefix the command:
-> `CLOUDFLARE_ACCOUNT_ID=YOUR_ACCOUNT_ID pnpm db:migrate:remote`
-> (Your account id is on the Cloudflare dashboard home page, right sidebar.)
+> Optional: set `ALLOWED_GITHUB_USERS` in `wrangler.jsonc` to a space/comma list of
+> GitHub logins to restrict who can sign in. Leave it out to let any GitHub
+> account translate — PRs are reviewed before merge anyway.
 
 ---
 
-## Step 4 — Make the GitHub token (for opening PRs)
+## Step 3 — Create the GitHub PAT (for opening PRs)
 
 Create a **fine-grained personal access token** at
 <https://github.com/settings/tokens?type=beta>:
 
-- **Resource owner:** `civo7`
-- **Repository access:** Only select repositories → `civo7/QOLLOCK`
+- **Resource owner:** `Predi-i`
+- **Repository access:** Only select repositories → `Predi-i/QOLLOCK-translations`
 - **Permissions:** Contents → Read and write, Pull requests → Read and write
-- Copy the token (starts with `github_pat_…`).
+
+Copy the token (`github_pat_…`) for Step 4.
 
 ---
 
-## Step 5 — Set up translator login (Cloudflare Access) + secrets
+## Step 4 — Add the GitHub Actions secrets
 
-Translators sign in through **Cloudflare Access** (Zero Trust). In the Cloudflare
-dashboard:
+The deploy runs on GitHub's servers, so the credentials live as **repository
+secrets** (not in the code). At
+`https://github.com/Predi-i/qollock-translate` → **Settings → Secrets and
+variables → Actions → New repository secret**, add four:
 
-1. Go to **Zero Trust → Access → Applications → Add an application** →
-   *Self-hosted*.
-2. Name it `QOLLOCK Translate`. For the domain, use the URL you'll get in Step 6
-   (you can come back and fix this after the first deploy if needed).
-3. Add a policy named `QOLLOCK translators`, decision **Allow**, with an
-   **Include → Emails** rule listing the translators you trust (add more later as
-   community translators ask). Save.
-4. From the application's overview, copy two values:
-   - **AUD tag** → this is `CF_ACCESS_AUD`.
-   - Your **team subdomain** (the `xxxx` in `xxxx.cloudflareaccess.com`) → this
-     is `CF_ACCESS_TEAM` (without `.cloudflareaccess.com`).
+| Secret | Value |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with **Workers Scripts: Edit**, **D1: Edit**, **Workers KV Storage: Edit** |
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account id (dashboard home, right sidebar) |
+| `OAUTH_CLIENT_SECRET` | The OAuth App client secret from Step 2 |
+| `PR_GITHUB_TOKEN` | The `github_pat_…` from Step 3 |
 
-Now push the three secrets to the Worker:
+> GitHub forbids the `GITHUB_` prefix for secret names, so the OAuth secret is
+> `OAUTH_CLIENT_SECRET` and the PR token is `PR_GITHUB_TOKEN`. The workflow maps
+> them to the Worker's `GITHUB_OAUTH_CLIENT_SECRET` / `GITHUB_TOKEN` bindings.
 
-```sh
-pnpm exec wrangler secret put CF_ACCESS_TEAM     # paste the team subdomain
-pnpm exec wrangler secret put CF_ACCESS_AUD      # paste the AUD tag
-pnpm exec wrangler secret put GITHUB_TOKEN       # paste the github_pat_… from Step 4
-```
-
-(Adding/removing translators later = edit the `QOLLOCK translators` policy's
-email list. See `docs/translator-access.md` for the dashboard + API methods —
-substitute the QOLLOCK app/policy names.)
+Create the Cloudflare token from the **"Edit Cloudflare Workers"** template, then
+**add D1: Edit** to it (the template doesn't include D1).
 
 ---
 
-## Step 6 — Deploy
+## Step 5 — Deploy
+
+Commit your `wrangler.jsonc` changes, push, and trigger the workflow:
 
 ```sh
-pnpm run deploy
+git push origin main
+gh workflow run deploy.yml --ref main -R Predi-i/qollock-translate
 ```
 
-This applies migrations, builds the site, and publishes the Worker. When it
-finishes it prints the live URL, e.g.
-`https://qollock-translate.YOUR-SUBDOMAIN.workers.dev`.
+(Or from the web: **Actions → Deploy → Run workflow**.) The workflow applies D1
+migrations, builds, deploys the Worker, then uploads the runtime secrets to it.
 
-Put that URL into `src/site.config.ts` (`SITE.url`) and redeploy so PR
-descriptions link to the right place:
+Watch it finish:
 
 ```sh
-# edit SITE.url, then:
-pnpm run deploy
+gh run watch "$(gh run list --workflow=deploy.yml -L1 -R Predi-i/qollock-translate --json databaseId --jq '.[0].databaseId')" -R Predi-i/qollock-translate
 ```
+
+When it's green, open `https://qollock-translate.<your-subdomain>.workers.dev` and
+sign in.
 
 ### Optional: custom domain
 
-If you own a domain on Cloudflare, uncomment the `routes` block in
-`wrangler.jsonc`, set `pattern` to your hostname (e.g.
-`translate.qollock.gg`), set `SITE.url` to match, and redeploy.
+If you own a domain on Cloudflare, set `workers_dev: false`, uncomment the
+`routes` block in `wrangler.jsonc` with your hostname, update the OAuth App
+Homepage/callback URLs to match, and redeploy.
 
 ---
 
-## You're live — the day-to-day loop
+## The day-to-day loop
 
-1. A translator opens the site, logs in, picks a language, fills in strings.
-2. They click **PR**; the site opens a pull request on `civo7/QOLLOCK` that
-   writes `translations/locales/<lang>/translation.json`.
-3. You review and **merge** the PR.
-4. Back in the QOLLOCK repo, fold the merged JSON into the canonical maps and
-   repack:
+1. A translator opens the site, signs in, picks a language, fills in strings.
+2. They click **PR** → a pull request appears on
+   [QOLLOCK-translations](https://github.com/Predi-i/QOLLOCK-translations) at
+   `locales/<lang>/translation.json`.
+3. A maintainer reviews and **merges** the PR.
+4. To ship it in the game, bring the merged translations into the **private**
+   QOLLOCK repo and repack the VPK:
 
    ```sh
-   cd /d/GitHub2/QOLLOCK
-   git pull
-   node scripts/import_locales_json.js
+   # in the private civo7/QOLLOCK repo:
+   # 1. copy the merged locales/<lang>/translation.json into translations/locales/<lang>/
+   node scripts/import_locales_json.js     # folds JSON into ql_settings.js
    node --check panorama/scripts/ql_settings.js
-   # then repack the VPK as usual
+   # 2. run the build pipeline to repack the VPK (scripts/qollock_pipeline.ps1)
    ```
 
-`import_locales_json.js` only fills/overwrites translations; it never wipes
-existing ones. Re-running `export_locales_json.js` after that keeps the JSON in
-sync for the next round.
+   `import_locales_json.js` only fills/overwrites translations; it never wipes
+   existing ones.
+
+**New English strings** flow the other way automatically: when the mod's locales
+are exported (`export_locales_json.js`) and pushed to the private repo's `main`,
+`sync-translations.yml` mirrors them to QOLLOCK-translations, and the site picks
+up the new source within ~5 minutes. No manual step on the website.
 
 ---
 
@@ -209,12 +178,13 @@ sync for the next round.
 
 | Symptom | Fix |
 |---|---|
-| Site loads but shows no strings | `GITHUB_REPO`/`GITHUB_BRANCH` wrong, or `translations/locales/en/translation.json` not on that branch yet (Step 0). |
-| `wrangler` "could not determine account id" | Prefix commands with `CLOUDFLARE_ACCOUNT_ID=…` (Step 3 note). |
-| PR button errors | `GITHUB_TOKEN` missing/expired or lacks Contents+PR write on `civo7/QOLLOCK` (Step 4). |
-| Can't log in / 403 | Email not in the `QOLLOCK translators` Access policy, or `CF_ACCESS_TEAM`/`CF_ACCESS_AUD` secrets wrong (Step 5). |
-| `secret put` auth error | Re-run `pnpm exec wrangler login` with a user that has Workers edit permission. |
+| Site loads but shows no strings | `GITHUB_REPO`/`GITHUB_BRANCH` wrong, or `locales/en/translation.json` missing on that branch. |
+| Sign-in fails / `redirect_uri mismatch` | OAuth App callback URL must exactly equal `https://<site>/auth/callback`. |
+| `?error=not_allowed` after login | The GitHub account isn't in `ALLOWED_GITHUB_USERS`. |
+| Deploy: `7403 not authorized` on D1 | The Cloudflare API token is missing **D1: Edit**. |
+| Deploy: "register a workers.dev subdomain" | No `*.workers.dev` subdomain on the account, or `workers_dev` not set. |
+| PR button errors | `PR_GITHUB_TOKEN` missing/expired or lacks Contents+PR write on QOLLOCK-translations. |
 
 The in-client "suggestion loop" (`SOCIAL_BASE_URL`) from upstream is intentionally
-disabled here — QOLLOCK has no social backend, and those endpoints simply return
-501 without affecting the rest of the site.
+disabled — QOLLOCK has no social backend, and those endpoints return 501 without
+affecting the rest of the site.
