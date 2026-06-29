@@ -18,7 +18,7 @@
     "enabled": true
   },
   "vars": {
-    "GITHUB_REPO": "civo7/QOLLOCK",
+    "GITHUB_REPO": "Predi-i/QOLLOCK-translations",
     "GITHUB_BRANCH": "main"
     // SOCIAL_BASE_URL (upstream's in-client suggestion loop) intentionally
     // omitted — QOLLOCK has no social backend, so that feature stays disabled.
