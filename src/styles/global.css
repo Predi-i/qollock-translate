@@ -54,6 +54,29 @@ textarea:focus-visible {
   color: #101010;
 }
 
+/* Slim, theme-matched scrollbars so the dark panes don't get a bright OS bar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a4150 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #343946;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4c5567;
+  background-clip: padding-box;
+}
+
 .shell {
   height: 100vh;
   height: 100dvh;
@@ -70,7 +93,15 @@ textarea:focus-visible {
   gap: 16px;
   padding: 0 20px;
   border-bottom: 1px solid var(--color-border);
-  background: rgba(15, 17, 21, 0.96);
+  background: linear-gradient(180deg, #14171e, #101319);
+}
+
+/* Thin vertical rule that separates button groups in a toolbar. */
+.toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 2px;
+  background: var(--color-border);
 }
 
 .brand {
@@ -81,16 +112,17 @@ textarea:focus-visible {
 }
 
 .brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
-  background: var(--color-panel-2);
-  border: 1px solid var(--color-border);
-  color: var(--color-accent);
+  background: linear-gradient(135deg, var(--color-accent), #b45309);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, var(--color-border));
+  color: #1a1205;
   font-family: var(--font-mono);
-  font-weight: 700;
+  font-weight: 800;
+  box-shadow: 0 2px 10px rgba(249, 115, 22, 0.25);
 }
 
 .brand-title {
@@ -288,10 +320,19 @@ textarea:focus-visible {
   text-align: left;
 }
 
-.language-button:hover,
-.language-button.active {
+.language-button:hover {
   background: var(--color-panel);
   border-color: var(--color-border);
+}
+
+.language-button.active {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-panel));
+  border-color: color-mix(in srgb, var(--color-accent) 50%, var(--color-border));
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.language-button.active .language-code {
+  color: var(--color-accent);
 }
 
 .language-code,
@@ -1673,7 +1714,10 @@ kbd {
 
 /* Progress bar in the rail */
 .progress {
-  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: linear-gradient(180deg, var(--color-panel), var(--color-panel-2));
 }
 
 .progress-head {

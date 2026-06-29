@@ -1328,6 +1328,7 @@ export default function TranslatorApp() {
             <RefreshCw size={16} />
             Refresh
           </button>
+          <span className="toolbar-divider" aria-hidden="true" />
           <button
             className={`btn ${view === 'contributors' ? 'btn-secondary' : ''}`}
             type="button"
