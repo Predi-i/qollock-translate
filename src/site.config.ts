@@ -16,9 +16,9 @@ export const SITE = {
   clientName: 'QOLLOCK',
   // Repo-relative directory holding the i18next catalogs the workbench reads
   // (`en/translation.json`) and writes PRs against (`<lang>/translation.json`).
-  // Upstream hardcoded `src/locales`; QOLLOCK keeps them under `translations/`,
-  // produced by scripts/export_locales_json.js. No leading or trailing slash.
-  localesPath: 'translations/locales',
+  // Upstream hardcoded `src/locales`; in the QOLLOCK-translations repo the
+  // catalogs live at `locales/<lang>/translation.json`. No leading/trailing slash.
+  localesPath: 'locales',
   // Brand/product nouns that usually should NOT be translated. The glossary
   // helper surfaces these first so translators agree on (or skip) them up front.
   // QOLLOCK domain nouns — proper names, healthbar styles, minigames, and the
