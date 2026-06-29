@@ -984,11 +984,24 @@ export default function TranslatorApp() {
 
   const insertIntoDraft = useCallback((key: string, token: string, padded = false) => {
     const el = document.getElementById(`tx-${key}`) as HTMLTextAreaElement | null;
+    // A whole-word insert (glossary term) into a box that already holds exactly
+    // that word — typically a not-yet-accepted glossary prefill — would otherwise
+    // double it ("Discord Discord"). Treat the click as "already there": leave the
+    // value alone and just put the cursor back in the box.
+    const skipDuplicate = padded && !!token.trim();
     if (!el) {
       setDrafts((d) => {
         const cur = d[key] ?? '';
+        if (skipDuplicate && cur.trim() === token.trim()) return d;
         const next = padded && cur && !cur.endsWith(' ') ? `${cur} ${token}` : `${cur}${token}`;
         return { ...d, [key]: next };
+      });
+      return;
+    }
+    if (skipDuplicate && el.value.trim() === token.trim()) {
+      requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
       });
       return;
     }
