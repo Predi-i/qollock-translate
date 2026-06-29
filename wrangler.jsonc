@@ -19,7 +19,17 @@
   },
   "vars": {
     "GITHUB_REPO": "Predi-i/QOLLOCK-translations",
-    "GITHUB_BRANCH": "main"
+    "GITHUB_BRANCH": "main",
+    // GitHub OAuth client id (replaces Cloudflare Access — no card required).
+    // Create a GitHub OAuth App (see DEPLOY.md), set its callback to
+    // https://<your-worker-url>/auth/callback, and paste the Client ID here.
+    // The matching secret is NOT stored here — set it with:
+    //   pnpm exec wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
+    "GITHUB_OAUTH_CLIENT_ID": "REPLACE_WITH_YOUR_OAUTH_CLIENT_ID"
+    // Optional: restrict sign-in to specific GitHub logins (comma/space list).
+    // Omit to let any GitHub account translate (PRs are reviewed before merge).
+    // "ALLOWED_GITHUB_USERS": "Predi-i civo7"
+    //
     // SOCIAL_BASE_URL (upstream's in-client suggestion loop) intentionally
     // omitted — QOLLOCK has no social backend, so that feature stays disabled.
   },
