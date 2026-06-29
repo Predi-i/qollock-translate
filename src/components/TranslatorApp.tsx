@@ -886,17 +886,25 @@ export default function TranslatorApp() {
   orderedKeysRef.current = orderedKeys;
 
   const groups = useMemo<RowGroup[]>(() => {
-    const out: RowGroup[] = [];
-    let current: RowGroup | null = null;
+    // Bucket by the A–Z section so case-only ordering quirks (lowercase keys sort
+    // after uppercase) don't split one letter into two headers. Letters first, "#"
+    // (digits/symbols) last.
+    const byLabel = new Map<string, RowGroup>();
     for (const row of filteredRows) {
       const section = sectionForKey(row.key);
-      if (!current || current.section.label !== section.label) {
-        current = { section, rows: [] };
-        out.push(current);
+      let group = byLabel.get(section.label);
+      if (!group) {
+        group = { section, rows: [] };
+        byLabel.set(section.label, group);
       }
-      current.rows.push(row);
+      group.rows.push(row);
     }
-    return out;
+    return [...byLabel.values()].sort((a, b) => {
+      const aHash = a.section.label === '#';
+      const bHash = b.section.label === '#';
+      if (aHash !== bHash) return aHash ? 1 : -1;
+      return a.section.label.localeCompare(b.section.label);
+    });
   }, [filteredRows]);
 
   const glossaryCandidates = useMemo(() => buildGlossaryCandidates(catalog?.rows ?? []), [catalog]);
@@ -2131,9 +2139,11 @@ const TranslationRow = memo(function TranslationRow({
             <span className="trow-err">
               <AlertTriangle size={13} /> {error}
             </span>
-          ) : (
+          ) : row.key !== row.source ? (
+            // In the QOLLOCK fork the key IS the English source, so showing it here
+            // just repeats the line above. Only show it when it actually differs.
             <span className="trow-key">{row.key}</span>
-          )}
+          ) : null}
         </div>
         <div className="trow-foot-right">
           <span className="trow-status">{saving ? 'Saving...' : saved ? 'Saved' : ''}</span>

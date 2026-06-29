@@ -88,28 +88,12 @@ export interface SectionMeta {
   hint: string;
 }
 
-const SECTION_META: Record<string, SectionMeta> = {
-  common: { label: 'Common', hint: 'Shared buttons and labels used all over the app' },
-  nav: { label: 'Navigation', hint: 'The main sidebar menu down the left of the app' },
-  sidebar: { label: 'Sidebar', hint: 'The collapsible sidebar' },
-  settings: { label: 'Settings', hint: 'The Settings screen' },
-  profiles: { label: 'Profiles', hint: 'Sharing and importing profiles' },
-  conflicts: { label: 'Conflicts', hint: 'Where the app resolves mod conflicts' },
-  stats: { label: 'Stats', hint: 'The statistics screen' },
-  locker: { label: 'Locker', hint: 'The mod locker' },
-  browse: { label: 'Browse', hint: 'Browsing and discovering mods' },
-  discover: { label: 'Discover', hint: 'The Discover screen' },
-  installed: { label: 'Installed', hint: 'Installed mods' },
-};
-
-function titleCase(value: string): string {
-  if (!value) return 'Other';
-  return value
-    .replace(/[_-]/g, ' ')
-    .replace(/\b\w/g, (ch) => ch.toUpperCase());
-}
-
+// QOLLOCK keys are full English sentences, so there is no meaningful key prefix to
+// group by (upstream nested keys like "settings.title"). Group alphabetically by the
+// first character instead, which turns the left list into an A–Z index. Non-letters
+// (digits, %, punctuation) collect under "#".
 export function sectionForKey(key: string): SectionMeta {
-  const top = key.split('.')[0] ?? '';
-  return SECTION_META[top] ?? { label: titleCase(top), hint: `Appears in the ${titleCase(top)} area` };
+  const first = key.trim().charAt(0).toUpperCase();
+  const letter = /[A-Z]/.test(first) ? first : '#';
+  return { label: letter, hint: `Strings starting with ${letter}` };
 }
