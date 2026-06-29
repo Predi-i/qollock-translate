@@ -9,8 +9,7 @@ export const SITE = {
   // Short badge shown in the header mark (2-3 letters).
   shortName: 'QT',
   // Public URL of this workbench. Referenced in the PR descriptions it opens.
-  // TODO: set to the real custom domain (or the *.workers.dev URL) after deploy.
-  url: 'https://translate.qollock.example',
+  url: 'https://qollock-translate.predi.workers.dev',
   // The end-user application whose strings you are translating. Used in UI copy
   // like "...words that repeat across QOLLOCK".
   clientName: 'QOLLOCK',
