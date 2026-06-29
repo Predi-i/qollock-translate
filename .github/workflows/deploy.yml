@@ -1,5 +1,8 @@
 name: Deploy
 
+# Deploys the workbench from GitHub's runners instead of a local machine.
+# Useful when the local network can't reach Cloudflare's upload API. Run it
+# manually from the Actions tab (Deploy -> Run workflow).
 on:
   workflow_dispatch:
 
@@ -33,7 +36,7 @@ jobs:
         run: pnpm build
 
       - name: Apply D1 migrations
-        run: pnpm exec wrangler d1 migrations apply grimoire-translate --remote
+        run: pnpm exec wrangler d1 migrations apply qollock-translate --remote
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -44,16 +47,17 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      # Push the runtime secrets onto the deployed Worker. GitHub reserves the
+      # secret name GITHUB_TOKEN, so the PR token is stored as PR_GITHUB_TOKEN
+      # here and mapped to the Worker's GITHUB_TOKEN binding.
       - name: Upload Worker secrets
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s' "$CF_ACCESS_TEAM" | pnpm exec wrangler secret put CF_ACCESS_TEAM
-          printf '%s' "$CF_ACCESS_AUD" | pnpm exec wrangler secret put CF_ACCESS_AUD
-          printf '%s' "$GRIMOIRE_TRANSLATE_GITHUB_TOKEN" | pnpm exec wrangler secret put GITHUB_TOKEN
+          printf '%s' "$GITHUB_OAUTH_CLIENT_SECRET" | pnpm exec wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
+          printf '%s' "$PR_GITHUB_TOKEN" | pnpm exec wrangler secret put GITHUB_TOKEN
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CF_ACCESS_TEAM: ${{ secrets.CF_ACCESS_TEAM }}
-          CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
-          GRIMOIRE_TRANSLATE_GITHUB_TOKEN: ${{ secrets.GRIMOIRE_TRANSLATE_GITHUB_TOKEN }}
+          GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GITHUB_OAUTH_CLIENT_SECRET }}
+          PR_GITHUB_TOKEN: ${{ secrets.PR_GITHUB_TOKEN }}
