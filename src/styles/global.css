@@ -105,6 +105,15 @@ textarea:focus-visible {
   line-height: 1.3;
 }
 
+.signout-link {
+  color: var(--color-muted);
+  text-decoration: underline;
+}
+
+.signout-link:hover {
+  color: var(--color-fg);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 320px minmax(360px, 1fr) minmax(360px, 560px);

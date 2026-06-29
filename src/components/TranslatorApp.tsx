@@ -1197,7 +1197,17 @@ export default function TranslatorApp() {
           <div className="brand-mark">{SITE.shortName}</div>
           <div>
             <div className="brand-title">{SITE.appName}</div>
-            <div className="brand-subtitle">{email || 'Loading account'}</div>
+            <div className="brand-subtitle">
+              {email || 'Loading account'}
+              {email ? (
+                <>
+                  {' · '}
+                  <a href="/auth/logout" className="signout-link">
+                    Sign out
+                  </a>
+                </>
+              ) : null}
+            </div>
           </div>
         </div>
         <div className="button-row">
