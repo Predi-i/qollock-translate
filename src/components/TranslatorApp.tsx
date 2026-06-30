@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   BookOpen,
   Check,
+  Copy,
   Download,
   ExternalLink,
   Flag,
@@ -1762,6 +1763,8 @@ export default function TranslatorApp() {
               onToggleReview={toggleReview}
               onInsertPlaceholder={insertPlaceholder}
               onInsertGlossaryTerm={insertGlossaryTerm}
+              onUndo={performUndo}
+              canUndo={undoDepth > 0}
             />
           ) : (
             <div className="editor-empty">
@@ -2092,6 +2095,8 @@ interface TranslationRowProps {
   onToggleReview: (row: CatalogRow, value: string, needsReview: boolean) => void;
   onInsertPlaceholder: (key: string, name: string) => void;
   onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
+  onUndo: () => void;
+  canUndo: boolean;
 }
 
 interface StringListItemProps {
@@ -2160,6 +2165,8 @@ const TranslationRow = memo(function TranslationRow({
   onToggleReview,
   onInsertPlaceholder,
   onInsertGlossaryTerm,
+  onUndo,
+  canUndo,
 }: TranslationRowProps) {
   const live = checkPlaceholders(row.source, value);
   const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
@@ -2240,6 +2247,17 @@ const TranslationRow = memo(function TranslationRow({
     onKeyDown(event, row);
   };
 
+  // Return focus to the box after a toolbar action (copy source / clear) so the
+  // translator can keep typing without reaching for the mouse.
+  const focusBox = () => {
+    const el = document.getElementById(`tx-${row.key}`) as HTMLTextAreaElement | null;
+    if (el) {
+      el.focus();
+      const len = el.value.length;
+      el.setSelectionRange(len, len);
+    }
+  };
+
   return (
     <div className={`trow ${flagged ? 'trow-flagged' : ''}`}>
       <div className="trow-en">
@@ -2313,6 +2331,55 @@ const TranslationRow = memo(function TranslationRow({
           </span>
         </div>
       ) : null}
+      <div className="trow-toolbar" role="toolbar" aria-label="Editor actions">
+        <button
+          type="button"
+          className="ed-tool"
+          title="Save this translation (or press Enter)"
+          disabled={saving || value === row.value}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onBlur(row, value)}
+        >
+          <Save size={15} />
+        </button>
+        <button
+          type="button"
+          className="ed-tool"
+          title="Undo the last saved change (Ctrl+Z)"
+          disabled={!canUndo}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onUndo}
+        >
+          <Undo2 size={15} />
+        </button>
+        <span className="ed-tool-sep" aria-hidden="true" />
+        <button
+          type="button"
+          className="ed-tool"
+          title="Copy the English source into the box"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onChange(row.key, row.source);
+            focusBox();
+          }}
+        >
+          <Copy size={15} />
+        </button>
+        <button
+          type="button"
+          className="ed-tool"
+          title="Clear the box"
+          disabled={!value}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onChange(row.key, '');
+            focusBox();
+          }}
+        >
+          <Trash2 size={15} />
+        </button>
+        <span className="trow-toolbar-status">{saving ? 'Saving…' : saved ? 'Saved' : ''}</span>
+      </div>
       <div className="trow-input-wrap">
         <textarea
           id={`tx-${row.key}`}
@@ -2384,7 +2451,6 @@ const TranslationRow = memo(function TranslationRow({
           ) : null}
         </div>
         <div className="trow-foot-right">
-          <span className="trow-status">{saving ? 'Saving...' : saved ? 'Saved' : ''}</span>
           <button
             type="button"
             className={`chk chk-flag ${needsReview ? 'on' : ''}`}
