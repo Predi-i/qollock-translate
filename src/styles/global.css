@@ -215,16 +215,17 @@ textarea:focus-visible {
 
 .workspace {
   display: grid;
-  /* Crowdin-style panes: compact string list · focus editor · (helper added in
-     a later step). Language picking lives in the topbar now. The glossary
-     *manager* still floats over the top (see .glossary-pane). */
-  grid-template-columns: minmax(300px, 1fr) minmax(440px, 1.5fr);
+  /* Crowdin-style panes: compact string list · focus editor · helper column.
+     Language picking lives in the topbar now. The glossary *manager* still
+     floats over the top (see .glossary-pane). */
+  grid-template-columns: minmax(280px, 1fr) minmax(420px, 1.6fr) minmax(240px, 0.7fr);
   min-height: 0;
 }
 
 .rail,
 .list-pane,
-.editor-pane {
+.editor-pane,
+.helper-pane {
   min-height: 0;
   overflow: hidden;
 }
@@ -251,6 +252,194 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   overflow: auto;
+}
+
+/* Helper column: scrolling body + a thin vertical tab strip pinned to the
+   far right edge of the workspace. */
+.helper-pane {
+  border-left: 1px solid var(--color-border);
+  background: var(--color-base);
+  display: flex;
+  flex-direction: row;
+}
+
+.helper-body {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.helper-strip {
+  flex: 0 0 44px;
+  border-left: 1px solid var(--color-border);
+  background: #12151b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.helper-tab {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.helper-tab:hover {
+  color: var(--color-fg);
+  background: var(--color-panel-2);
+}
+
+.helper-tab.on {
+  color: var(--color-fg);
+  background: var(--color-panel-2);
+  border-color: var(--color-border);
+}
+
+.helper-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.helper-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+  margin-bottom: 10px;
+}
+
+.helper-note {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.helper-gloss-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.helper-gloss {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--color-panel);
+}
+
+.helper-gloss-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.helper-gloss-source {
+  font-weight: 650;
+  color: var(--color-fg);
+}
+
+.helper-gloss-source::after {
+  content: '→';
+  margin-left: 6px;
+  color: var(--color-muted);
+}
+
+.helper-gloss-target {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.helper-gloss-keep {
+  font-size: 11px;
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+.helper-gloss-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-fg);
+  opacity: 0.85;
+}
+
+.helper-gloss-by {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.helper-details {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px 0;
+  margin: 0;
+}
+
+.helper-details dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-muted);
+  margin-top: 10px;
+}
+
+.helper-details dt:first-child {
+  margin-top: 0;
+}
+
+.helper-details dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--color-fg);
+  word-break: break-word;
+}
+
+.helper-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.helper-ph-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.helper-ph {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--color-panel-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 
 .section {
@@ -2323,7 +2512,7 @@ kbd {
 
 @media (max-width: 1200px) {
   .workspace {
-    grid-template-columns: 240px minmax(220px, 0.8fr) minmax(360px, 1.2fr);
+    grid-template-columns: minmax(240px, 0.9fr) minmax(360px, 1.5fr) minmax(210px, 0.7fr);
   }
 }
 
@@ -2338,6 +2527,12 @@ kbd {
 
   .workspace {
     grid-template-columns: 1fr;
+  }
+
+  /* The helper column is supplementary; drop it on narrow screens so the list
+     and editor get the full width. */
+  .helper-pane {
+    display: none;
   }
 
   .rail,

@@ -9,6 +9,7 @@ import {
   Flag,
   GitPullRequest,
   HelpCircle,
+  Info,
   Languages,
   Lightbulb,
   Plus,
@@ -326,6 +327,8 @@ export default function TranslatorApp() {
   const [lastImportBatch, setLastImportBatch] = useState<{ id: string; rowCount: number } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [undoDepth, setUndoDepth] = useState(0);
+  // Right helper column: which tab is showing for the selected string.
+  const [helperTab, setHelperTab] = useState<'glossary' | 'details'>('glossary');
   const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [glossary, setGlossary] = useState<Record<string, GlossaryTerm>>({});
   const [glossaryDrafts, setGlossaryDrafts] = useState<Record<string, GlossaryDraft>>({});
@@ -1780,6 +1783,16 @@ export default function TranslatorApp() {
           )}
         </section>
 
+        <HelperPanel
+          tab={helperTab}
+          onTabChange={setHelperTab}
+          row={selectedRow ?? null}
+          matches={selectedRow ? glossaryMatchesByKey.get(selectedRow.key) ?? EMPTY_GLOSSARY_MATCHES : EMPTY_GLOSSARY_MATCHES}
+          draftValue={selectedRow ? drafts[selectedRow.key] ?? '' : ''}
+          activeLanguageName={activeLanguageName}
+          onInsertGlossaryTerm={insertGlossaryTerm}
+        />
+
         {glossaryOpen ? (
           <GlossaryPanel
             activeLanguageName={activeLanguageName}
@@ -2480,6 +2493,145 @@ const TranslationRow = memo(function TranslationRow({
     </div>
   );
 });
+
+interface HelperPanelProps {
+  tab: 'glossary' | 'details';
+  onTabChange: (tab: 'glossary' | 'details') => void;
+  row: CatalogRow | null;
+  matches: GlossaryTerm[];
+  draftValue: string;
+  activeLanguageName: string;
+  onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
+}
+
+// Right-hand helper column: a thin vertical tab strip pinned to the far edge,
+// plus a body that shows context for the string open in the editor. Glossary =
+// the dictionary terms found in the source; Details = key, status, placeholders
+// and character counts.
+function HelperPanel({
+  tab,
+  onTabChange,
+  row,
+  matches,
+  draftValue,
+  activeLanguageName,
+  onInsertGlossaryTerm,
+}: HelperPanelProps) {
+  const live = row ? checkPlaceholders(row.source, draftValue) : null;
+  const flagged = !!live && draftValue.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
+  const meta = row ? statusMeta(row.status, flagged, row.needsReview) : null;
+
+  return (
+    <section className="helper-pane">
+      <div className="helper-body">
+        {!row ? (
+          <div className="helper-empty">
+            <Info size={22} />
+            <p>Select a string to see its glossary and details.</p>
+          </div>
+        ) : tab === 'glossary' ? (
+          <div className="helper-section">
+            <div className="helper-title">Glossary</div>
+            {matches.length === 0 ? (
+              <p className="helper-note">No glossary terms appear in this string.</p>
+            ) : (
+              <ul className="helper-gloss-list">
+                {matches.map((term) => {
+                  const keep = term.sourceTerm.toLowerCase() === term.targetTerm.toLowerCase();
+                  return (
+                    <li className="helper-gloss" key={term.sourceTerm}>
+                      <button
+                        type="button"
+                        className="helper-gloss-head"
+                        title={keep ? `Keep "${term.sourceTerm}" as-is` : `Insert "${term.targetTerm}" into the box`}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => onInsertGlossaryTerm(row.key, term.targetTerm)}
+                      >
+                        <span className="helper-gloss-source">{term.sourceTerm}</span>
+                        {keep ? (
+                          <span className="helper-gloss-keep">keep as-is</span>
+                        ) : (
+                          <span className="helper-gloss-target">{term.targetTerm}</span>
+                        )}
+                      </button>
+                      {term.notes ? <p className="helper-gloss-note">{term.notes}</p> : null}
+                      {term.updatedBy ? <p className="helper-gloss-by">— {term.updatedBy}</p> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <div className="helper-section">
+            <div className="helper-title">Details</div>
+            <dl className="helper-details">
+              {row.key !== row.source ? (
+                <>
+                  <dt>Key</dt>
+                  <dd className="helper-mono">{row.key}</dd>
+                </>
+              ) : null}
+              <dt>Status</dt>
+              <dd>{meta ? <span className={`badge ${meta.cls}`}>{meta.label}</span> : null}</dd>
+              <dt>Placeholders</dt>
+              <dd>
+                {row.placeholders.length === 0 ? (
+                  <span className="helper-note">None</span>
+                ) : (
+                  <span className="helper-ph-list">
+                    {row.placeholders.map((name) => (
+                      <code className="helper-ph" key={name}>{`{{${name}}}`}</code>
+                    ))}
+                  </span>
+                )}
+              </dd>
+              <dt>Length</dt>
+              <dd>
+                {draftValue.length} / {row.source.length}
+                <span className="helper-note"> ({activeLanguageName || 'translation'} / source chars)</span>
+              </dd>
+              {row.translatorEmail ? (
+                <>
+                  <dt>Last edited by</dt>
+                  <dd>{row.translatorEmail}</dd>
+                </>
+              ) : null}
+              {row.updatedAt ? (
+                <>
+                  <dt>Updated</dt>
+                  <dd>{formatDate(row.updatedAt)}</dd>
+                </>
+              ) : null}
+            </dl>
+          </div>
+        )}
+      </div>
+      <div className="helper-strip" role="tablist" aria-label="Helper tabs">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'glossary'}
+          className={`helper-tab ${tab === 'glossary' ? 'on' : ''}`}
+          title="Glossary"
+          onClick={() => onTabChange('glossary')}
+        >
+          <BookOpen size={18} />
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'details'}
+          className={`helper-tab ${tab === 'details' ? 'on' : ''}`}
+          title="Details"
+          onClick={() => onTabChange('details')}
+        >
+          <Info size={18} />
+        </button>
+      </div>
+    </section>
+  );
+}
 
 interface GlossaryPanelProps {
   activeLanguageName: string;
