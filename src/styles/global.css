@@ -146,12 +146,79 @@ textarea:focus-visible {
   color: var(--color-fg);
 }
 
+/* Topbar language picker + mini progress (replaces the old left language rail). */
+.lang-cluster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lang-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 8px 0 10px;
+  background: var(--color-panel-2);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-muted);
+}
+
+.lang-select-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+}
+
+.lang-select {
+  border: 0;
+  background: transparent;
+  color: var(--color-fg);
+  font-weight: 650;
+  outline: none;
+  max-width: 220px;
+  cursor: pointer;
+}
+
+.lang-select option {
+  background: var(--color-panel);
+  color: var(--color-fg);
+}
+
+.topbar-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.topbar-progress-track {
+  width: 96px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-panel-2);
+  overflow: hidden;
+}
+
+.topbar-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-accent), #fb923c);
+}
+
+.topbar-progress-pct {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}
+
 .workspace {
   display: grid;
-  /* Crowdin-style three panes: language rail · compact string list · focus
-     editor. The glossary floats over the top (see .glossary-pane) so it never
-     squeezes these columns. */
-  grid-template-columns: 300px minmax(260px, 0.82fr) minmax(440px, 1.18fr);
+  /* Crowdin-style panes: compact string list · focus editor · (helper added in
+     a later step). Language picking lives in the topbar now. The glossary
+     *manager* still floats over the top (see .glossary-pane). */
+  grid-template-columns: minmax(300px, 1fr) minmax(440px, 1.5fr);
   min-height: 0;
 }
 

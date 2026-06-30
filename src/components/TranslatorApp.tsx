@@ -1359,6 +1359,49 @@ export default function TranslatorApp() {
             </div>
           </div>
         </div>
+        {view === 'translations' ? (
+          <div className="lang-cluster">
+            <div className="lang-select-wrap">
+              <Languages size={15} />
+              <select
+                className="lang-select"
+                value={selectedLanguage}
+                disabled={languages.length === 0}
+                aria-label="Translation language"
+                onChange={(event) => setSelectedLanguage(event.target.value)}
+              >
+                {languages.length === 0 ? (
+                  <option value="">No languages yet</option>
+                ) : (
+                  languages.map((language) => (
+                    <option key={language.code} value={language.code}>
+                      {flagForCode(language.code)} {language.name} ({language.code})
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            <button
+              className="btn btn-icon"
+              type="button"
+              title="Add a language"
+              onClick={() => {
+                setPickerQuery('');
+                setPickerOpen(true);
+              }}
+            >
+              <Plus size={16} />
+            </button>
+            {catalog ? (
+              <div className="topbar-progress" title={`${completion}% complete`}>
+                <div className="topbar-progress-track">
+                  <div className="topbar-progress-fill" style={{ width: `${completion}%` }} />
+                </div>
+                <span className="topbar-progress-pct">{completion}%</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="button-row">
           <button
             className="btn"
@@ -1499,70 +1542,6 @@ export default function TranslatorApp() {
         </main>
       ) : (
         <main className={`workspace ${glossaryOpen ? 'workspace--glossary' : ''}`}>
-        <aside className="rail">
-          <div className="section">
-            <div className="section-title">Languages</div>
-            <button
-              className="btn btn-primary add-lang-btn"
-              type="button"
-              onClick={() => {
-                setPickerQuery('');
-                setPickerOpen(true);
-              }}
-            >
-              <Plus size={16} />
-              Add a language
-            </button>
-          </div>
-
-          <div className="section">
-            {catalog ? (
-              <div className="progress" aria-label={`${completion}% complete`}>
-                <div className="progress-head">
-                  <span className="progress-label">{activeLanguageName} progress</span>
-                  <span className="progress-pct">{completion}%</span>
-                </div>
-                <div className="progress-track">
-                  <div className="progress-fill" style={{ width: `${completion}%` }} />
-                </div>
-                <div className="progress-sub">
-                  {catalog.stats.completed} of {catalog.stats.total} done
-                  {catalog.stats.total - catalog.stats.completed > 0
-                    ? ` · ${catalog.stats.total - catalog.stats.completed} left to do`
-                    : ' · all done 🎉'}
-                  {catalog.stats.reviewed > 0 ? ` · ${catalog.stats.reviewed} approved` : ''}
-                </div>
-              </div>
-            ) : (
-              <div className="hint">Pick or add a language to see progress.</div>
-            )}
-          </div>
-
-          <div className="language-list">
-            {languages.length === 0 ? (
-              <div className="empty">
-                <Languages size={26} style={{ margin: '0 auto 10px' }} />
-                No languages yet. Add one above to start.
-              </div>
-            ) : (
-              languages.map((language) => (
-                <button
-                  key={language.code}
-                  type="button"
-                  className={`language-button ${language.code === selectedLanguage ? 'active' : ''}`}
-                  onClick={() => setSelectedLanguage(language.code)}
-                >
-                  <span className="lang-left">
-                    <span className="lang-flag">{flagForCode(language.code)}</span>
-                    <span>{language.name}</span>
-                  </span>
-                  <span className="language-code">{language.code}</span>
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
         <section className="list-pane">
           <div className="list-head">
             <div className="list-toolbar">
