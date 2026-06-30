@@ -215,17 +215,41 @@ textarea:focus-visible {
 
 .workspace {
   display: grid;
-  /* Two panes: a wide string table (the selected row expands in place to edit)
-     and a helper column. Language picking lives in the topbar now. The glossary
-     *manager* still floats over the top (see .glossary-pane). */
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.5fr);
+  /* Three columns: the string table, a drag handle, and the tools pane on the
+     right. The pixel width of the tools pane is set inline (it is persisted to
+     localStorage and resizable via the handle); CSS just supplies the fallback. */
+  grid-template-columns: minmax(0, 1fr) 6px 360px;
   min-height: 0;
 }
 
 .rail,
 .list-pane,
-.helper-pane {
+.tools-pane {
   min-height: 0;
+  overflow: hidden;
+}
+
+/* Vertical drag handle between the table and the tools pane. Wide enough to
+   grab comfortably; a subtle vertical line shows where it sits. */
+.pane-resizer {
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid transparent;
+  transition: background 0.15s;
+}
+
+.pane-resizer:hover,
+.pane-resizer:active {
+  background: rgba(249, 115, 22, 0.25);
+}
+
+/* Right-hand tools pane. Holds either the focused-row helper or the glossary
+   manager (one at a time). */
+.tools-pane {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-base);
   overflow: hidden;
 }
 
@@ -246,55 +270,40 @@ textarea:focus-visible {
   flex-direction: column;
 }
 
-/* Helper column: scrolling body + a thin vertical tab strip pinned to the
-   far right edge of the workspace. */
-.helper-pane {
-  border-left: 1px solid var(--color-border);
-  background: var(--color-base);
-  display: flex;
-  flex-direction: row;
-}
-
+/* Helper body — scrolling content of the tools pane for the focused row. */
 .helper-body {
   flex: 1;
   min-width: 0;
   overflow: auto;
-  padding: 14px;
-}
-
-.helper-strip {
-  flex: 0 0 44px;
-  border-left: 1px solid var(--color-border);
-  background: #12151b;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+
+.helper-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.helper-status {
+  font-size: 12px;
+  color: var(--color-success);
+  font-weight: 650;
+}
+
+.helper-toolbar {
+  display: flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 0;
+  flex-wrap: wrap;
 }
 
-.helper-tab {
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-muted);
-  cursor: pointer;
-}
-
-.helper-tab:hover {
-  color: var(--color-fg);
-  background: var(--color-panel-2);
-}
-
-.helper-tab.on {
-  color: var(--color-fg);
-  background: var(--color-panel-2);
-  border-color: var(--color-border);
+.helper-section + .helper-section {
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
 }
 
 .helper-empty {
@@ -307,6 +316,25 @@ textarea:focus-visible {
   text-align: center;
   color: var(--color-muted);
   font-size: 13px;
+  padding: 24px;
+}
+
+.helper-hint {
+  margin: 0 0 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.helper-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.helper-ph-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .helper-title {
@@ -784,6 +812,184 @@ textarea:focus-visible {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+/* Real, inline-editable table — the body of the workspace. Each row has a
+   status dot, the English source (with glossary marks), the translation
+   textarea, and an approve/status slot on the right. Clicking the textarea
+   makes that row the focused row in the helper pane on the right. */
+.table-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1fr) 64px;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--color-base);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-muted);
+  font-weight: 700;
+}
+
+.tablerow {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1fr) 64px;
+  gap: 10px;
+  align-items: start;
+  padding: 6px 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid rgba(52, 57, 70, 0.5);
+  background: transparent;
+  color: var(--color-fg);
+}
+
+.tablerow:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.tablerow.active {
+  background: rgba(249, 115, 22, 0.08);
+  border-left-color: var(--color-accent);
+}
+
+.tablerow.flagged .tablerow-tgt {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.tablerow-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: var(--color-muted);
+}
+
+.tablerow-dot.missing { background: #ef6b6b; }
+.tablerow-dot.translated { background: var(--color-accent); }
+.tablerow-dot.reviewed { background: var(--color-success); }
+.tablerow-dot.flagged { background: var(--color-warning); }
+.tablerow-dot.review { background: var(--color-accent-2); }
+.tablerow-dot.shipped { background: #5eead4; }
+
+.tablerow-src {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-fg);
+  padding-top: 4px;
+  word-break: break-word;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.tablerow-sugg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--color-accent-2);
+}
+
+.tablerow-tgt-wrap {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tablerow-tgt {
+  width: 100%;
+  min-height: 30px;
+  resize: vertical;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-fg);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.tablerow-tgt:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.18);
+  background: var(--color-panel-2);
+}
+
+.tablerow-err {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--color-warning);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tablerow-act {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-top: 3px;
+}
+
+.tablerow-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--color-muted);
+}
+
+.tablerow-status.saved {
+  color: var(--color-success);
+}
+
+.tablerow-approve {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.tablerow-approve:hover:not(:disabled) {
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
+
+.tablerow-approve.on {
+  border-color: rgba(34, 197, 94, 0.55);
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+}
+
+.tablerow-approve.readonly {
+  cursor: default;
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
+
+.tablerow-approve:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Compact string list — the Crowdin-style left column. Each item shows the
@@ -2142,18 +2348,11 @@ kbd {
   cursor: not-allowed;
 }
 
-/* Glossary helper */
+/* Glossary helper — fills the tools pane when open, replacing the focused-row
+   helper instead of floating over the workspace. */
 .glossary-pane {
-  /* Floats over the editor as a right-hand drawer so the three main panes keep
-     their width whether or not the glossary is open. */
-  position: fixed;
-  top: 64px;
-  right: 0;
-  bottom: 0;
-  width: min(400px, 100%);
-  z-index: 35;
-  border-left: 1px solid var(--color-border);
-  box-shadow: -18px 0 44px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  height: 100%;
   background: #12151b;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);

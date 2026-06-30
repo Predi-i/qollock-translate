@@ -142,6 +142,10 @@ const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 const CODE_RE = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
 const TUTORIAL_SEEN_KEY = 'gt.tutorialSeen.v1';
 const GLOSSARY_OPEN_KEY = 'gt.glossaryOpen.v1';
+const RIGHT_WIDTH_KEY = 'gt.rightWidth.v1';
+const RIGHT_WIDTH_MIN = 260;
+const RIGHT_WIDTH_MAX = 640;
+const RIGHT_WIDTH_DEFAULT = 360;
 const EMPTY_GLOSSARY_MATCHES: GlossaryTerm[] = [];
 const EMPTY_SUGGESTIONS: Suggestion[] = [];
 const PRIORITY_GLOSSARY_TERMS = SITE.priorityGlossaryTerms;
@@ -338,7 +342,9 @@ export default function TranslatorApp() {
   const [showHelp, setShowHelp] = useState(false);
   const [undoDepth, setUndoDepth] = useState(0);
   // Right helper column: which tab is showing for the selected string.
-  const [helperTab, setHelperTab] = useState<'glossary' | 'details'>('glossary');
+  // Right tools pane: drag-resizable width (persisted). It shows either the
+  // focused string's helper or the full glossary editor (glossaryOpen).
+  const [rightWidth, setRightWidth] = useState(RIGHT_WIDTH_DEFAULT);
   const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [glossary, setGlossary] = useState<Record<string, GlossaryTerm>>({});
   const [glossaryDrafts, setGlossaryDrafts] = useState<Record<string, GlossaryDraft>>({});
@@ -396,6 +402,43 @@ export default function TranslatorApp() {
     } catch {
       // matchMedia/localStorage may be unavailable in tests; keep it behind the button.
     }
+    try {
+      const w = Number(localStorage.getItem(RIGHT_WIDTH_KEY));
+      if (Number.isFinite(w) && w >= RIGHT_WIDTH_MIN && w <= RIGHT_WIDTH_MAX) setRightWidth(w);
+    } catch {
+      // localStorage may be unavailable; keep the default width.
+    }
+  }, []);
+
+  // Drag the divider between the table and the tools pane. We resize from the
+  // right edge, so the new width is (window right - pointer x), clamped.
+  const startResize = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    const onMove = (e: MouseEvent) => {
+      const next = Math.min(
+        RIGHT_WIDTH_MAX,
+        Math.max(RIGHT_WIDTH_MIN, window.innerWidth - e.clientX)
+      );
+      setRightWidth(next);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setRightWidth((w) => {
+        try {
+          localStorage.setItem(RIGHT_WIDTH_KEY, String(w));
+        } catch {
+          // localStorage may be unavailable; the width still applies for the session.
+        }
+        return w;
+      });
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   }, []);
 
   // Single entry point for showing/hiding the glossary so every toggle (toolbar
@@ -1004,6 +1047,13 @@ export default function TranslatorApp() {
     setSelectedKey(key);
   }, []);
 
+  // The translator focused a row's box directly: make it the selected row (so the
+  // tools pane follows) without stealing focus back into the textarea.
+  const focusRow = useCallback((key: string) => {
+    focusEditorRef.current = false;
+    setSelectedKey(key);
+  }, []);
+
   const groups = useMemo<RowGroup[]>(() => {
     // Bucket by the A–Z section so case-only ordering quirks (lowercase keys sort
     // after uppercase) don't split one letter into two headers. Letters first, "#"
@@ -1564,7 +1614,10 @@ export default function TranslatorApp() {
           </section>
         </main>
       ) : (
-        <main className={`workspace ${glossaryOpen ? 'workspace--glossary' : ''}`}>
+        <main
+          className="workspace"
+          style={{ gridTemplateColumns: `minmax(0, 1fr) 6px ${rightWidth}px` }}
+        >
         <section className="list-pane">
           <div className="list-head">
             <div className="list-toolbar">
@@ -1755,6 +1808,12 @@ export default function TranslatorApp() {
           </div>
 
           <div className="key-list">
+            <div className="table-head" aria-hidden="true">
+              <span className="th-dot" />
+              <span className="th-src">Source</span>
+              <span className="th-tgt">Translation</span>
+              <span className="th-act" />
+            </div>
             {filteredRows.length === 0 ? (
               <div className="empty">No strings here. Try another filter.</div>
             ) : (
@@ -1765,39 +1824,26 @@ export default function TranslatorApp() {
                     <span className="list-group-count">{group.rows.length}</span>
                   </div>
                   {group.rows.map((row) => (
-                    <div className="srow" key={row.key}>
-                      <StringListItem
-                        row={row}
-                        value={drafts[row.key] ?? ''}
-                        active={row.key === selectedKey}
-                        hasSuggestion={suggestionsByKey.has(row.key)}
-                        onSelect={selectRow}
-                      />
-                      {row.key === selectedKey ? (
-                        <TranslationRow
-                          row={row}
-                          value={drafts[row.key] ?? ''}
-                          saving={!!savingKeys[row.key]}
-                          saved={!!savedKeys[row.key]}
-                          error={rowErrors[row.key]}
-                          activeLanguageName={activeLanguageName}
-                          glossaryPrefill={glossaryPrefills.get(row.key)}
-                          glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
-                          suggestions={suggestionsByKey.get(row.key) ?? EMPTY_SUGGESTIONS}
-                          onAcceptSuggestion={acceptSuggestion}
-                          onRejectSuggestion={rejectSuggestion}
-                          onChange={handleChange}
-                          onKeyDown={onRowKeyDown}
-                          onBlur={commitRow}
-                          onToggleCheck={toggleCheck}
-                          canReview={isReviewer}
-                          onInsertPlaceholder={insertPlaceholder}
-                          onInsertGlossaryTerm={insertGlossaryTerm}
-                          onUndo={performUndo}
-                          canUndo={undoDepth > 0}
-                        />
-                      ) : null}
-                    </div>
+                    <TableRow
+                      key={row.key}
+                      row={row}
+                      value={drafts[row.key] ?? ''}
+                      saving={!!savingKeys[row.key]}
+                      saved={!!savedKeys[row.key]}
+                      error={rowErrors[row.key]}
+                      active={row.key === selectedKey}
+                      hasSuggestion={suggestionsByKey.has(row.key)}
+                      canReview={isReviewer}
+                      activeLanguageName={activeLanguageName}
+                      glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
+                      onFocusRow={focusRow}
+                      onChange={handleChange}
+                      onKeyDown={onRowKeyDown}
+                      onBlur={commitRow}
+                      onToggleCheck={toggleCheck}
+                      onInsertPlaceholder={insertPlaceholder}
+                      onInsertGlossaryTerm={insertGlossaryTerm}
+                    />
                   ))}
                 </div>
               ))
@@ -1805,40 +1851,59 @@ export default function TranslatorApp() {
           </div>
         </section>
 
-        <HelperPanel
-          tab={helperTab}
-          onTabChange={setHelperTab}
-          row={selectedRow ?? null}
-          matches={selectedRow ? glossaryMatchesByKey.get(selectedRow.key) ?? EMPTY_GLOSSARY_MATCHES : EMPTY_GLOSSARY_MATCHES}
-          draftValue={selectedRow ? drafts[selectedRow.key] ?? '' : ''}
-          activeLanguageName={activeLanguageName}
-          onInsertGlossaryTerm={insertGlossaryTerm}
+        <div
+          className="pane-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize"
+          onMouseDown={startResize}
         />
 
-        {glossaryOpen ? (
-          <GlossaryPanel
-            activeLanguageName={activeLanguageName}
-            items={glossaryItems}
-            drafts={glossaryDrafts}
-            filter={glossaryFilter}
-            query={glossaryQuery}
-            error={glossaryError}
-            candidateCount={glossaryCandidates.length}
-            savedCount={savedGlossaryCount}
-            saving={savingGlossary}
-            saved={savedGlossary}
-            onClose={() => setGlossaryVisible(false)}
-            onFilterChange={(next) => {
-              setGlossaryFilter(next);
-              setPinnedGlossary({});
-            }}
-            onQueryChange={setGlossaryQuery}
-            onDraftChange={handleGlossaryDraftChange}
-            onSave={saveGlossaryTerm}
-            onDelete={deleteGlossaryTerm}
-            onAddTerm={addCustomGlossaryTerm}
-          />
-        ) : null}
+        <aside className="tools-pane">
+          {glossaryOpen ? (
+            <GlossaryPanel
+              activeLanguageName={activeLanguageName}
+              items={glossaryItems}
+              drafts={glossaryDrafts}
+              filter={glossaryFilter}
+              query={glossaryQuery}
+              error={glossaryError}
+              candidateCount={glossaryCandidates.length}
+              savedCount={savedGlossaryCount}
+              saving={savingGlossary}
+              saved={savedGlossary}
+              onClose={() => setGlossaryVisible(false)}
+              onFilterChange={(next) => {
+                setGlossaryFilter(next);
+                setPinnedGlossary({});
+              }}
+              onQueryChange={setGlossaryQuery}
+              onDraftChange={handleGlossaryDraftChange}
+              onSave={saveGlossaryTerm}
+              onDelete={deleteGlossaryTerm}
+              onAddTerm={addCustomGlossaryTerm}
+            />
+          ) : (
+            <StringHelper
+              row={selectedRow ?? null}
+              value={selectedRow ? drafts[selectedRow.key] ?? '' : ''}
+              saving={selectedRow ? !!savingKeys[selectedRow.key] : false}
+              saved={selectedRow ? !!savedKeys[selectedRow.key] : false}
+              canReview={isReviewer}
+              canUndo={undoDepth > 0}
+              activeLanguageName={activeLanguageName}
+              matches={selectedRow ? glossaryMatchesByKey.get(selectedRow.key) ?? EMPTY_GLOSSARY_MATCHES : EMPTY_GLOSSARY_MATCHES}
+              suggestions={selectedRow ? suggestionsByKey.get(selectedRow.key) ?? EMPTY_SUGGESTIONS : EMPTY_SUGGESTIONS}
+              onChange={handleChange}
+              onInsertPlaceholder={insertPlaceholder}
+              onInsertGlossaryTerm={insertGlossaryTerm}
+              onAcceptSuggestion={acceptSuggestion}
+              onRejectSuggestion={rejectSuggestion}
+              onToggleCheck={toggleCheck}
+              onUndo={performUndo}
+            />
+          )}
+        </aside>
       </main>
       )}
 
@@ -2112,104 +2177,52 @@ function SuggestionCard({
   );
 }
 
-interface TranslationRowProps {
+interface TableRowProps {
   row: CatalogRow;
   value: string;
   saving: boolean;
   saved: boolean;
   error?: string;
+  active: boolean;
+  hasSuggestion: boolean;
+  canReview: boolean;
   activeLanguageName: string;
-  glossaryPrefill?: string;
   glossaryMatches: GlossaryTerm[];
-  suggestions: Suggestion[];
-  onAcceptSuggestion: (suggestion: Suggestion) => Promise<string | null>;
-  onRejectSuggestion: (suggestion: Suggestion) => Promise<string | null>;
+  onFocusRow: (key: string) => void;
   onChange: (key: string, value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => void;
   onBlur: (row: CatalogRow, value: string) => void;
   onToggleCheck: (row: CatalogRow, value: string, reviewed: boolean) => void;
-  // Reviewers see an Approve button; everyone else just sees their save status.
-  canReview: boolean;
   onInsertPlaceholder: (key: string, name: string) => void;
   onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
-  onUndo: () => void;
-  canUndo: boolean;
 }
 
-interface StringListItemProps {
-  row: CatalogRow;
-  value: string;
-  active: boolean;
-  hasSuggestion: boolean;
-  onSelect: (key: string) => void;
-}
+// One row of the real table — source on the left, an inline textarea for the
+// translation on the right. The whole row is the editor; focusing the textarea
+// just tells the parent "this is the active string" so the right-hand helper
+// follows along. memoized so a keystroke only re-renders the row being edited.
 
-// Compact left-hand list row, two columns like Crowdin: the English source (with
-// its key/ID dim underneath when it differs) on the left, the current translation
-// on the right, and a status dot up front. Clicking opens it in the editor.
-const StringListItem = memo(function StringListItem({
-  row,
-  value,
-  active,
-  hasSuggestion,
-  onSelect,
-}: StringListItemProps) {
-  const live = checkPlaceholders(row.source, value);
-  const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
-  const meta = statusMeta(row.status, flagged);
-  const preview = value.trim();
-  return (
-    <button
-      type="button"
-      className={`slist-item ${active ? 'active' : ''}`}
-      aria-current={active}
-      onClick={() => onSelect(row.key)}
-    >
-      <span className={`slist-dot ${meta.cls}`} title={meta.label} aria-hidden="true" />
-      <span className="slist-src">
-        <span className="slist-src-text">{row.source}</span>
-        {/* In this fork the key usually IS the English source, so only show it
-            when it actually adds an ID worth seeing. */}
-        {row.key !== row.source ? <span className="slist-key">{row.key}</span> : null}
-      </span>
-      <span className={`slist-tgt ${preview ? '' : 'empty'}`}>
-        <span className="slist-tgt-text">{preview || 'Untranslated'}</span>
-        {hasSuggestion ? <Lightbulb className="slist-sugg" size={12} aria-label="Has a suggestion" /> : null}
-      </span>
-    </button>
-  );
-});
-
-// One translation row, memoized so a keystroke only re-renders the row being
-// edited instead of the whole catalog. All handler props are stable
-// (useCallback in the parent), so memo can skip every untouched row.
-const TranslationRow = memo(function TranslationRow({
+const TableRow = memo(function TableRow({
   row,
   value,
   saving,
   saved,
   error,
+  active,
+  hasSuggestion,
+  canReview,
   activeLanguageName,
-  glossaryPrefill,
   glossaryMatches,
-  suggestions,
-  onAcceptSuggestion,
-  onRejectSuggestion,
+  onFocusRow,
   onChange,
   onKeyDown,
   onBlur,
   onToggleCheck,
-  canReview,
   onInsertPlaceholder,
   onInsertGlossaryTerm,
-  onUndo,
-  canUndo,
-}: TranslationRowProps) {
+}: TableRowProps) {
   const live = checkPlaceholders(row.source, value);
   const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
-  // The box holds a glossary suggestion the translator has not accepted or
-  // changed yet (no saved value, text still equals the prefill).
-  const isPrefill = !!glossaryPrefill && value === glossaryPrefill && !row.value.trim();
   const reviewed = row.status === 'reviewed';
   const meta = statusMeta(row.status, flagged);
 
@@ -2283,150 +2296,30 @@ const TranslationRow = memo(function TranslationRow({
     onKeyDown(event, row);
   };
 
-  // Return focus to the box after a toolbar action (copy source / clear) so the
-  // translator can keep typing without reaching for the mouse.
-  const focusBox = () => {
-    const el = document.getElementById(`tx-${row.key}`) as HTMLTextAreaElement | null;
-    if (el) {
-      el.focus();
-      const len = el.value.length;
-      el.setSelectionRange(len, len);
-    }
-  };
-
   return (
-    <div className={`trow ${flagged ? 'trow-flagged' : ''}`}>
-      <div className="trow-en">
+    <div
+      className={`tablerow ${active ? 'active' : ''} ${flagged ? 'flagged' : ''}`}
+      data-key={row.key}
+    >
+      <span className={`tablerow-dot ${meta.cls}`} title={meta.label} aria-hidden="true" />
+      <div className="tablerow-src">
         <SourceWithGlossary source={row.source} matches={glossaryMatches} />
-        <span className={`badge ${meta.cls}`}>{meta.label}</span>
+        {hasSuggestion ? (
+          <Lightbulb className="tablerow-sugg" size={12} aria-label="Has a suggestion" />
+        ) : null}
       </div>
-      {suggestions.length > 0 ? (
-        <div className="trow-suggestions">
-          {suggestions.map((suggestion) => (
-            <SuggestionCard
-              key={suggestion.id}
-              suggestion={suggestion}
-              onAccept={onAcceptSuggestion}
-              onReject={onRejectSuggestion}
-            />
-          ))}
-        </div>
-      ) : null}
-      {row.placeholders.length > 0 ? (
-        <div className="trow-ph">
-          <span className="trow-ph-label">Keep these (click, or press Tab):</span>
-          {row.placeholders.map((item) => (
-            <button
-              type="button"
-              className="placeholder placeholder-btn"
-              key={item}
-              title={`Insert {{${item}}} at the cursor`}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onInsertPlaceholder(row.key, item)}
-            >
-              {`{{${item}}}`}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {glossaryMatches.length > 0 ? (
-        <div className="trow-glossary">
-          <span className="trow-glossary-label">Glossary:</span>
-          {glossaryMatches.map((term) => {
-            // "Keep" terms translate to themselves (brand nouns like Discord). The
-            // source -> target chip would just print the same word twice, so show a
-            // single "keep" chip instead.
-            const keep = term.sourceTerm.toLowerCase() === term.targetTerm.toLowerCase();
-            return (
-              <button
-                type="button"
-                className={`glossary-chip ${keep ? 'glossary-chip--keep' : ''}`}
-                key={term.sourceTerm}
-                title={term.notes || (keep ? `Keep "${term.sourceTerm}" as-is` : `Insert "${term.targetTerm}"`)}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onInsertGlossaryTerm(row.key, term.targetTerm)}
-              >
-                {keep ? (
-                  <span className="glossary-chip-target">{term.targetTerm}</span>
-                ) : (
-                  <>
-                    <span className="glossary-chip-source">{term.sourceTerm}</span>
-                    <span className="glossary-chip-target">{term.targetTerm}</span>
-                  </>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-      {isPrefill ? (
-        <div className="trow-prefill-hint">
-          <BookOpen size={13} />
-          <span>
-            Filled in from your glossary. Press <kbd>Enter</kbd> to accept, or type over it.
-          </span>
-        </div>
-      ) : null}
-      <div className="trow-toolbar" role="toolbar" aria-label="Editor actions">
-        <button
-          type="button"
-          className="ed-tool"
-          title="Save this translation (or press Enter)"
-          disabled={saving || value === row.value}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => onBlur(row, value)}
-        >
-          <Save size={15} />
-        </button>
-        <button
-          type="button"
-          className="ed-tool"
-          title="Undo the last saved change (Ctrl+Z)"
-          disabled={!canUndo}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={onUndo}
-        >
-          <Undo2 size={15} />
-        </button>
-        <span className="ed-tool-sep" aria-hidden="true" />
-        <button
-          type="button"
-          className="ed-tool"
-          title="Copy the English source into the box"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            onChange(row.key, row.source);
-            focusBox();
-          }}
-        >
-          <Copy size={15} />
-        </button>
-        <button
-          type="button"
-          className="ed-tool"
-          title="Clear the box"
-          disabled={!value}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            onChange(row.key, '');
-            focusBox();
-          }}
-        >
-          <Trash2 size={15} />
-        </button>
-        <span className="trow-toolbar-status">{saving ? 'Saving…' : saved ? 'Saved' : ''}</span>
-      </div>
-      <div className="trow-input-wrap">
+      <div className="tablerow-tgt-wrap">
         <textarea
           id={`tx-${row.key}`}
-          className={`trow-input ${isPrefill ? 'trow-input--prefill' : ''}`}
+          className="tablerow-tgt"
           dir="auto"
           rows={1}
-          placeholder={`Type the ${activeLanguageName || 'translation'} here`}
+          placeholder={`Translate to ${activeLanguageName || '…'}`}
           value={value}
           aria-expanded={!!menu}
           aria-controls={menu ? `insert-menu-${row.key}` : undefined}
           aria-activedescendant={menu && menuItems.length > 0 ? `insert-opt-${row.key}-${menu.index}` : undefined}
+          onFocus={() => onFocusRow(row.key)}
           onChange={(event) => onChange(row.key, event.target.value)}
           onKeyDown={onTextareaKeyDown}
           onBlur={(event) => {
@@ -2434,6 +2327,11 @@ const TranslationRow = memo(function TranslationRow({
             onBlur(row, event.target.value);
           }}
         />
+        {error ? (
+          <span className="tablerow-err" title={error}>
+            <AlertTriangle size={12} /> {error}
+          </span>
+        ) : null}
         {menu ? (
           <div
             className="insert-menu"
@@ -2474,180 +2372,256 @@ const TranslationRow = memo(function TranslationRow({
           </div>
         ) : null}
       </div>
-      <div className="trow-foot">
-        <div className="trow-foot-left">
-          {error ? (
-            <span className="trow-err">
-              <AlertTriangle size={13} /> {error}
-            </span>
-          ) : row.key !== row.source ? (
-            // In the QOLLOCK fork the key IS the English source, so showing it here
-            // just repeats the line above. Only show it when it actually differs.
-            <span className="trow-key">{row.key}</span>
-          ) : null}
-        </div>
-        <div className="trow-foot-right">
-          {canReview ? (
-            // Reviewers approve here; an approved string can be sent back for review.
-            <button
-              type="button"
-              className={`chk ${reviewed ? 'on' : ''}`}
-              title={reviewed ? 'Approved. Click to send back for review.' : 'Approve this translation'}
-              disabled={!value.trim() || saving}
-              onClick={() => onToggleCheck(row, value, reviewed)}
-            >
-              <Check size={14} />
-              {reviewed ? 'Approved' : 'Approve'}
-            </button>
-          ) : reviewed ? (
-            <span className="badge reviewed">
-              <Check size={13} /> Approved
-            </span>
-          ) : value.trim() ? (
-            <span className="trow-hint">Saved — a reviewer will approve it</span>
-          ) : null}
-        </div>
+      <div className="tablerow-act">
+        {saving ? (
+          <span className="tablerow-status saving" title="Saving…"><Save size={12} /></span>
+        ) : saved ? (
+          <span className="tablerow-status saved" title="Saved"><Check size={12} /></span>
+        ) : null}
+        {canReview ? (
+          <button
+            type="button"
+            className={`tablerow-approve ${reviewed ? 'on' : ''}`}
+            title={reviewed ? 'Approved. Click to send back for review.' : 'Approve this translation'}
+            disabled={!value.trim() || saving}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onToggleCheck(row, value, reviewed)}
+            aria-pressed={reviewed}
+          >
+            <Check size={14} />
+          </button>
+        ) : reviewed ? (
+          <span className="tablerow-approve readonly" title="Approved">
+            <Check size={14} />
+          </span>
+        ) : null}
       </div>
     </div>
   );
 });
 
-interface HelperPanelProps {
-  tab: 'glossary' | 'details';
-  onTabChange: (tab: 'glossary' | 'details') => void;
+interface StringHelperProps {
   row: CatalogRow | null;
-  matches: GlossaryTerm[];
-  draftValue: string;
+  value: string;
+  saving: boolean;
+  saved: boolean;
+  canReview: boolean;
+  canUndo: boolean;
   activeLanguageName: string;
+  matches: GlossaryTerm[];
+  suggestions: Suggestion[];
+  onChange: (key: string, value: string) => void;
+  onInsertPlaceholder: (key: string, name: string) => void;
   onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
+  onAcceptSuggestion: (suggestion: Suggestion) => Promise<string | null>;
+  onRejectSuggestion: (suggestion: Suggestion) => Promise<string | null>;
+  onToggleCheck: (row: CatalogRow, value: string, reviewed: boolean) => void;
+  onUndo: () => void;
 }
 
-// Right-hand helper column: a thin vertical tab strip pinned to the far edge,
-// plus a body that shows context for the string open in the editor. Glossary =
-// the dictionary terms found in the source; Details = key, status, placeholders
-// and character counts.
-function HelperPanel({
-  tab,
-  onTabChange,
+// Right-hand helper for the focused row: source actions (copy / clear / undo),
+// glossary terms to insert, placeholders to insert, community suggestions, and
+// details. The row's textarea sits in the table itself — this pane only adds
+// context and helpers that would otherwise crowd the inline row.
+function StringHelper({
   row,
-  matches,
-  draftValue,
+  value,
+  saving,
+  saved,
+  canReview,
+  canUndo,
   activeLanguageName,
+  matches,
+  suggestions,
+  onChange,
+  onInsertPlaceholder,
   onInsertGlossaryTerm,
-}: HelperPanelProps) {
-  const live = row ? checkPlaceholders(row.source, draftValue) : null;
-  const flagged = !!live && draftValue.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
-  const meta = row ? statusMeta(row.status, flagged) : null;
+  onAcceptSuggestion,
+  onRejectSuggestion,
+  onToggleCheck,
+  onUndo,
+}: StringHelperProps) {
+  if (!row) {
+    return (
+      <div className="helper-empty">
+        <Info size={22} />
+        <p>Click a translation cell to edit it. Details and the glossary for that string show up here.</p>
+      </div>
+    );
+  }
+
+  const live = checkPlaceholders(row.source, value);
+  const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
+  const meta = statusMeta(row.status, flagged);
+  const reviewed = row.status === 'reviewed';
+
+  // The toolbar mutates the row's textarea via the parent's onChange — refocus
+  // the box so the translator can keep typing without reaching for the mouse.
+  const focusBox = () => {
+    const el = document.getElementById(`tx-${row.key}`) as HTMLTextAreaElement | null;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  };
 
   return (
-    <section className="helper-pane">
-      <div className="helper-body">
-        {!row ? (
-          <div className="helper-empty">
-            <Info size={22} />
-            <p>Select a string to see its glossary and details.</p>
+    <div className="helper-body">
+      <div className="helper-head">
+        <span className={`badge ${meta.cls}`}>{meta.label}</span>
+        <span className="helper-status">{saving ? 'Saving…' : saved ? 'Saved' : ''}</span>
+      </div>
+
+      <div className="helper-toolbar" role="toolbar" aria-label="Editor actions">
+        <button
+          type="button"
+          className="ed-tool"
+          title="Copy the English source into the box"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onChange(row.key, row.source);
+            focusBox();
+          }}
+        >
+          <Copy size={15} />
+        </button>
+        <button
+          type="button"
+          className="ed-tool"
+          title="Clear the box"
+          disabled={!value}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onChange(row.key, '');
+            focusBox();
+          }}
+        >
+          <Trash2 size={15} />
+        </button>
+        <button
+          type="button"
+          className="ed-tool"
+          title="Undo the last saved change (Ctrl+Z)"
+          disabled={!canUndo}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onUndo}
+        >
+          <Undo2 size={15} />
+        </button>
+        {canReview ? (
+          <button
+            type="button"
+            className={`chk ${reviewed ? 'on' : ''}`}
+            title={reviewed ? 'Approved. Click to send back for review.' : 'Approve this translation'}
+            disabled={!value.trim() || saving}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onToggleCheck(row, value, reviewed)}
+          >
+            <Check size={14} />
+            {reviewed ? 'Approved' : 'Approve'}
+          </button>
+        ) : null}
+      </div>
+
+      {suggestions.length > 0 ? (
+        <div className="helper-section">
+          <div className="helper-title">Suggestions</div>
+          <div className="helper-suggestions">
+            {suggestions.map((suggestion) => (
+              <SuggestionCard
+                key={suggestion.id}
+                suggestion={suggestion}
+                onAccept={onAcceptSuggestion}
+                onReject={onRejectSuggestion}
+              />
+            ))}
           </div>
-        ) : tab === 'glossary' ? (
-          <div className="helper-section">
-            <div className="helper-title">Glossary</div>
-            {matches.length === 0 ? (
-              <p className="helper-note">No glossary terms appear in this string.</p>
-            ) : (
-              <ul className="helper-gloss-list">
-                {matches.map((term) => {
-                  const keep = term.sourceTerm.toLowerCase() === term.targetTerm.toLowerCase();
-                  return (
-                    <li className="helper-gloss" key={term.sourceTerm}>
-                      <button
-                        type="button"
-                        className="helper-gloss-head"
-                        title={keep ? `Keep "${term.sourceTerm}" as-is` : `Insert "${term.targetTerm}" into the box`}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => onInsertGlossaryTerm(row.key, term.targetTerm)}
-                      >
-                        <span className="helper-gloss-source">{term.sourceTerm}</span>
-                        {keep ? (
-                          <span className="helper-gloss-keep">keep as-is</span>
-                        ) : (
-                          <span className="helper-gloss-target">{term.targetTerm}</span>
-                        )}
-                      </button>
-                      {term.notes ? <p className="helper-gloss-note">{term.notes}</p> : null}
-                      {term.updatedBy ? <p className="helper-gloss-by">— {term.updatedBy}</p> : null}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+        </div>
+      ) : null}
+
+      {row.placeholders.length > 0 ? (
+        <div className="helper-section">
+          <div className="helper-title">Placeholders</div>
+          <p className="helper-hint">Click to insert at the cursor (or press <kbd>Tab</kbd> in the box).</p>
+          <div className="helper-ph-row">
+            {row.placeholders.map((name) => (
+              <button
+                type="button"
+                className="placeholder placeholder-btn"
+                key={name}
+                title={`Insert {{${name}}} at the cursor`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onInsertPlaceholder(row.key, name)}
+              >
+                {`{{${name}}}`}
+              </button>
+            ))}
           </div>
+        </div>
+      ) : null}
+
+      <div className="helper-section">
+        <div className="helper-title">Glossary</div>
+        {matches.length === 0 ? (
+          <p className="helper-hint">No glossary terms appear in this string.</p>
         ) : (
-          <div className="helper-section">
-            <div className="helper-title">Details</div>
-            <dl className="helper-details">
-              {row.key !== row.source ? (
-                <>
-                  <dt>Key</dt>
-                  <dd className="helper-mono">{row.key}</dd>
-                </>
-              ) : null}
-              <dt>Status</dt>
-              <dd>{meta ? <span className={`badge ${meta.cls}`}>{meta.label}</span> : null}</dd>
-              <dt>Placeholders</dt>
-              <dd>
-                {row.placeholders.length === 0 ? (
-                  <span className="helper-note">None</span>
-                ) : (
-                  <span className="helper-ph-list">
-                    {row.placeholders.map((name) => (
-                      <code className="helper-ph" key={name}>{`{{${name}}}`}</code>
-                    ))}
-                  </span>
-                )}
-              </dd>
-              <dt>Length</dt>
-              <dd>
-                {draftValue.length} / {row.source.length}
-                <span className="helper-note"> ({activeLanguageName || 'translation'} / source chars)</span>
-              </dd>
-              {row.translatorEmail ? (
-                <>
-                  <dt>Last edited by</dt>
-                  <dd>{row.translatorEmail}</dd>
-                </>
-              ) : null}
-              {row.updatedAt ? (
-                <>
-                  <dt>Updated</dt>
-                  <dd>{formatDate(row.updatedAt)}</dd>
-                </>
-              ) : null}
-            </dl>
-          </div>
+          <ul className="helper-gloss-list">
+            {matches.map((term) => {
+              const keep = term.sourceTerm.toLowerCase() === term.targetTerm.toLowerCase();
+              return (
+                <li className="helper-gloss" key={term.sourceTerm}>
+                  <button
+                    type="button"
+                    className="helper-gloss-head"
+                    title={keep ? `Keep "${term.sourceTerm}" as-is` : `Insert "${term.targetTerm}" into the box`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => onInsertGlossaryTerm(row.key, term.targetTerm)}
+                  >
+                    <span className="helper-gloss-source">{term.sourceTerm}</span>
+                    {keep ? (
+                      <span className="helper-gloss-keep">keep as-is</span>
+                    ) : (
+                      <span className="helper-gloss-target">{term.targetTerm}</span>
+                    )}
+                  </button>
+                  {term.notes ? <p className="helper-gloss-note">{term.notes}</p> : null}
+                  {term.updatedBy ? <p className="helper-gloss-by">— {term.updatedBy}</p> : null}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
-      <div className="helper-strip" role="tablist" aria-label="Helper tabs">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'glossary'}
-          className={`helper-tab ${tab === 'glossary' ? 'on' : ''}`}
-          title="Glossary"
-          onClick={() => onTabChange('glossary')}
-        >
-          <BookOpen size={18} />
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'details'}
-          className={`helper-tab ${tab === 'details' ? 'on' : ''}`}
-          title="Details"
-          onClick={() => onTabChange('details')}
-        >
-          <Info size={18} />
-        </button>
+
+      <div className="helper-section">
+        <div className="helper-title">Details</div>
+        <dl className="helper-details">
+          {row.key !== row.source ? (
+            <>
+              <dt>Key</dt>
+              <dd className="helper-mono">{row.key}</dd>
+            </>
+          ) : null}
+          <dt>Length</dt>
+          <dd>
+            {value.length} / {row.source.length}
+            <span className="helper-hint"> ({activeLanguageName || 'translation'} / source chars)</span>
+          </dd>
+          {row.translatorEmail ? (
+            <>
+              <dt>Last edited by</dt>
+              <dd>{row.translatorEmail}</dd>
+            </>
+          ) : null}
+          {row.updatedAt ? (
+            <>
+              <dt>Updated</dt>
+              <dd>{formatDate(row.updatedAt)}</dd>
+            </>
+          ) : null}
+        </dl>
       </div>
-    </section>
+    </div>
   );
 }
 
