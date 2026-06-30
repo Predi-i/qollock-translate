@@ -263,17 +263,17 @@ const GLOSSARY_STOPWORDS = new Set([
 
 // Plain-language labels. Wire-format status values stay the same.
 function statusMeta(status: RowStatus, flagged: boolean, needsReview: boolean): { label: string; cls: string } {
-  if (flagged) return { label: 'Needs fix', cls: 'flagged' };
-  if (needsReview) return { label: 'Review me', cls: 'review' };
+  if (flagged) return { label: 'Issue', cls: 'flagged' };
+  if (needsReview) return { label: 'Needs review', cls: 'review' };
   switch (status) {
     case 'missing':
-      return { label: 'To do', cls: 'missing' };
+      return { label: 'Untranslated', cls: 'missing' };
     case 'shipped':
-      return { label: 'Already live', cls: 'shipped' };
+      return { label: 'Live', cls: 'shipped' };
     case 'reviewed':
-      return { label: 'Checked', cls: 'reviewed' };
+      return { label: 'Approved', cls: 'reviewed' };
     default:
-      return { label: 'Done', cls: 'translated' };
+      return { label: 'Translated', cls: 'translated' };
   }
 }
 
@@ -1493,7 +1493,7 @@ export default function TranslatorApp() {
                   {catalog.stats.total - catalog.stats.completed > 0
                     ? ` · ${catalog.stats.total - catalog.stats.completed} left to do`
                     : ' · all done 🎉'}
-                  {catalog.stats.reviewed > 0 ? ` · ${catalog.stats.reviewed} checked` : ''}
+                  {catalog.stats.reviewed > 0 ? ` · ${catalog.stats.reviewed} approved` : ''}
                 </div>
               </div>
             ) : (
@@ -1680,11 +1680,11 @@ export default function TranslatorApp() {
 
           <div className="segmented" role="tablist" aria-label="String filters">
             {([
-              ['open', 'To do'],
-              ['flagged', 'Needs fix'],
-              ['done', 'Done'],
-              ...(checkedCount > 0 ? ([['checked', `Checked (${checkedCount})`]] as Array<[Filter, string]>) : []),
-              ...(reviewCount > 0 ? ([['review', `To review (${reviewCount})`]] as Array<[Filter, string]>) : []),
+              ['open', 'Untranslated'],
+              ['flagged', 'Issues'],
+              ['done', 'Translated'],
+              ...(checkedCount > 0 ? ([['checked', `Approved (${checkedCount})`]] as Array<[Filter, string]>) : []),
+              ...(reviewCount > 0 ? ([['review', `Needs review (${reviewCount})`]] as Array<[Filter, string]>) : []),
               ...(suggestionCount > 0 ? ([['suggested', `Suggestions (${suggestionCount})`]] as Array<[Filter, string]>) : []),
             ] as Array<[Filter, string]>).map(([value, label]) => (
               <button
@@ -1903,7 +1903,7 @@ export default function TranslatorApp() {
                     <strong>Keep the {'{{tags}}'}.</strong> Anything inside double braces, like{' '}
                     <span className="placeholder">{'{{count}}'}</span>, is a slot the app fills in. Click the chip
                     under the English, or press <kbd>Tab</kbd> in the box, to drop it into your text. We warn you (
-                    <span className="badge flagged">Needs fix</span>) if one goes missing.
+                    <span className="badge flagged">Issue</span>) if one goes missing.
                   </div>
                 </li>
                 <li>
@@ -1925,15 +1925,15 @@ export default function TranslatorApp() {
                 <div className="guide-tip">
                   <Check size={15} />
                   <span>
-                    Use the <strong>Check</strong> button to mark a translation you are confident in. The tabs up top
-                    let you focus on what is <strong>To do</strong>.
+                    Use the <strong>Approve</strong> button to mark a translation you are confident in. The tabs up top
+                    let you focus on what is <strong>Untranslated</strong>.
                   </span>
                 </div>
                 <div className="guide-tip">
                   <Flag size={15} />
                   <span>
-                    Not sure about one? Hit <strong>Review</strong> to flag it. Flagged strings gather under a{' '}
-                    <strong>To review</strong> tab so someone can take a second look.
+                    Not sure about one? Hit <strong>Flag</strong> to mark it. Flagged strings gather under a{' '}
+                    <strong>Needs review</strong> tab so someone can take a second look.
                   </span>
                 </div>
                 <div className="guide-tip">
@@ -2313,17 +2313,17 @@ const TranslationRow = memo(function TranslationRow({
             onClick={() => onToggleReview(row, value, !needsReview)}
           >
             <Flag size={14} />
-            {needsReview ? 'Flagged' : 'Review'}
+            {needsReview ? 'Needs review' : 'Flag'}
           </button>
           <button
             type="button"
             className={`chk ${reviewed ? 'on' : ''}`}
-            title={reviewed ? 'Checked. Click to unmark.' : 'Mark this translation as checked'}
+            title={reviewed ? 'Approved. Click to unmark.' : 'Approve this translation'}
             disabled={!value.trim() || saving}
             onClick={() => onToggleCheck(row, value, reviewed)}
           >
             <Check size={14} />
-            {reviewed ? 'Checked' : 'Check'}
+            {reviewed ? 'Approved' : 'Approve'}
           </button>
         </div>
       </div>
