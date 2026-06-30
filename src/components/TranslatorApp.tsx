@@ -1729,58 +1729,44 @@ export default function TranslatorApp() {
                     <span className="list-group-count">{group.rows.length}</span>
                   </div>
                   {group.rows.map((row) => (
-                    <StringListItem
-                      key={row.key}
-                      row={row}
-                      value={drafts[row.key] ?? ''}
-                      active={row.key === selectedKey}
-                      hasSuggestion={suggestionsByKey.has(row.key)}
-                      onSelect={selectRow}
-                    />
+                    <div className="srow" key={row.key}>
+                      <StringListItem
+                        row={row}
+                        value={drafts[row.key] ?? ''}
+                        active={row.key === selectedKey}
+                        hasSuggestion={suggestionsByKey.has(row.key)}
+                        onSelect={selectRow}
+                      />
+                      {row.key === selectedKey ? (
+                        <TranslationRow
+                          row={row}
+                          value={drafts[row.key] ?? ''}
+                          saving={!!savingKeys[row.key]}
+                          saved={!!savedKeys[row.key]}
+                          error={rowErrors[row.key]}
+                          activeLanguageName={activeLanguageName}
+                          glossaryPrefill={glossaryPrefills.get(row.key)}
+                          glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
+                          suggestions={suggestionsByKey.get(row.key) ?? EMPTY_SUGGESTIONS}
+                          onAcceptSuggestion={acceptSuggestion}
+                          onRejectSuggestion={rejectSuggestion}
+                          onChange={handleChange}
+                          onKeyDown={onRowKeyDown}
+                          onBlur={commitRow}
+                          onToggleCheck={toggleCheck}
+                          onToggleReview={toggleReview}
+                          onInsertPlaceholder={insertPlaceholder}
+                          onInsertGlossaryTerm={insertGlossaryTerm}
+                          onUndo={performUndo}
+                          canUndo={undoDepth > 0}
+                        />
+                      ) : null}
+                    </div>
                   ))}
                 </div>
               ))
             )}
           </div>
-        </section>
-
-        <section className="editor-pane">
-          {selectedRow ? (
-            <TranslationRow
-              key={selectedRow.key}
-              row={selectedRow}
-              value={drafts[selectedRow.key] ?? ''}
-              saving={!!savingKeys[selectedRow.key]}
-              saved={!!savedKeys[selectedRow.key]}
-              error={rowErrors[selectedRow.key]}
-              activeLanguageName={activeLanguageName}
-              glossaryPrefill={glossaryPrefills.get(selectedRow.key)}
-              glossaryMatches={glossaryMatchesByKey.get(selectedRow.key) ?? EMPTY_GLOSSARY_MATCHES}
-              suggestions={suggestionsByKey.get(selectedRow.key) ?? EMPTY_SUGGESTIONS}
-              onAcceptSuggestion={acceptSuggestion}
-              onRejectSuggestion={rejectSuggestion}
-              onChange={handleChange}
-              onKeyDown={onRowKeyDown}
-              onBlur={commitRow}
-              onToggleCheck={toggleCheck}
-              onToggleReview={toggleReview}
-              onInsertPlaceholder={insertPlaceholder}
-              onInsertGlossaryTerm={insertGlossaryTerm}
-              onUndo={performUndo}
-              canUndo={undoDepth > 0}
-            />
-          ) : (
-            <div className="editor-empty">
-              <BookOpen size={30} />
-              <p>
-                {!catalog
-                  ? 'Pick or add a language to start translating.'
-                  : filteredRows.length === 0
-                    ? 'Nothing to edit in this filter.'
-                    : 'Select a string on the left to start translating.'}
-              </p>
-            </div>
-          )}
         </section>
 
         <HelperPanel

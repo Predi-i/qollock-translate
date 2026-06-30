@@ -215,16 +215,15 @@ textarea:focus-visible {
 
 .workspace {
   display: grid;
-  /* Crowdin-style panes: compact string list · focus editor · helper column.
-     Language picking lives in the topbar now. The glossary *manager* still
-     floats over the top (see .glossary-pane). */
-  grid-template-columns: minmax(280px, 1fr) minmax(420px, 1.6fr) minmax(240px, 0.7fr);
+  /* Two panes: a wide string table (the selected row expands in place to edit)
+     and a helper column. Language picking lives in the topbar now. The glossary
+     *manager* still floats over the top (see .glossary-pane). */
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.5fr);
   min-height: 0;
 }
 
 .rail,
 .list-pane,
-.editor-pane,
 .helper-pane {
   min-height: 0;
   overflow: hidden;
@@ -245,13 +244,6 @@ textarea:focus-visible {
      only the key list grows to fill the rest. */
   display: flex;
   flex-direction: column;
-}
-
-.editor-pane {
-  background: var(--color-panel);
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
 }
 
 /* Helper column: scrolling body + a thin vertical tab strip pinned to the
@@ -868,23 +860,23 @@ textarea:focus-visible {
   color: var(--color-accent-2);
 }
 
-/* Focus editor (right pane) — the selected string rendered large. */
-.editor-pane .trow {
-  border-bottom: 0;
-  padding: 16px 20px;
+/* Inline editor — the selected list row expands in place to this panel. */
+.srow .trow {
+  border-bottom: 1px solid var(--color-border);
+  border-left: 2px solid var(--color-accent);
+  padding: 14px 16px;
   gap: 10px;
   width: 100%;
-  max-width: 820px;
-  margin: 0 auto;
+  background: var(--color-panel);
 }
 
-.editor-pane .trow-en-text {
-  font-size: 16px;
+.srow .trow-en-text {
+  font-size: 15px;
   line-height: 1.45;
 }
 
-.editor-pane .trow-input {
-  min-height: 120px;
+.srow .trow-input {
+  min-height: 110px;
   font-size: 15px;
 }
 
@@ -931,27 +923,6 @@ textarea:focus-visible {
   font-size: 12px;
   color: var(--color-success);
   font-weight: 650;
-}
-
-.editor-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 28px;
-  color: var(--color-muted);
-  text-align: center;
-}
-
-.editor-empty svg {
-  color: var(--color-border);
-}
-
-.editor-empty p {
-  max-width: 280px;
-  line-height: 1.5;
 }
 
 .key-row {
@@ -2512,7 +2483,7 @@ kbd {
 
 @media (max-width: 1200px) {
   .workspace {
-    grid-template-columns: minmax(240px, 0.9fr) minmax(360px, 1.5fr) minmax(210px, 0.7fr);
+    grid-template-columns: minmax(0, 1fr) minmax(210px, 0.5fr);
   }
 }
 
@@ -2551,12 +2522,7 @@ kbd {
   }
 
   .list-pane {
-    min-height: 0;
-    max-height: 46vh;
-  }
-
-  .editor-pane {
-    min-height: 72vh;
+    min-height: 60vh;
   }
 
   .contributor-row {
