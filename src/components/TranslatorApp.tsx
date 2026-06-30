@@ -2102,8 +2102,9 @@ interface StringListItemProps {
   onSelect: (key: string) => void;
 }
 
-// Compact left-hand list row: source on top, translation preview below, a status
-// dot, and (optionally) a suggestion marker. Clicking opens it in the editor.
+// Compact left-hand list row, two columns like Crowdin: the English source (with
+// its key/ID dim underneath when it differs) on the left, the current translation
+// on the right, and a status dot up front. Clicking opens it in the editor.
 const StringListItem = memo(function StringListItem({
   row,
   value,
@@ -2123,15 +2124,16 @@ const StringListItem = memo(function StringListItem({
       onClick={() => onSelect(row.key)}
     >
       <span className={`slist-dot ${meta.cls}`} title={meta.label} aria-hidden="true" />
-      <span className="slist-texts">
-        <span className="slist-source">{row.source}</span>
-        <span className={`slist-target ${preview ? '' : 'empty'}`}>{preview || 'Untranslated'}</span>
+      <span className="slist-src">
+        <span className="slist-src-text">{row.source}</span>
+        {/* In this fork the key usually IS the English source, so only show it
+            when it actually adds an ID worth seeing. */}
+        {row.key !== row.source ? <span className="slist-key">{row.key}</span> : null}
       </span>
-      {hasSuggestion ? (
-        <span className="slist-sugg" title="Has a suggestion">
-          <Lightbulb size={13} />
-        </span>
-      ) : null}
+      <span className={`slist-tgt ${preview ? '' : 'empty'}`}>
+        <span className="slist-tgt-text">{preview || 'Untranslated'}</span>
+        {hasSuggestion ? <Lightbulb className="slist-sugg" size={12} aria-label="Has a suggestion" /> : null}
+      </span>
     </button>
   );
 });
