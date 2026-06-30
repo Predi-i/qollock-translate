@@ -459,17 +459,20 @@ textarea:focus-visible {
   }
 }
 
+/* Filter tabs wrap onto as many rows as needed so labels never clip in the
+   narrow list column (six filters won't fit one row at 260px). */
 .segmented {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  padding: 4px;
+  padding: 6px;
   border-bottom: 1px solid var(--color-border);
 }
 
 .segment {
-  min-height: 32px;
+  flex: 1 1 auto;
+  min-height: 30px;
+  padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
@@ -477,6 +480,11 @@ textarea:focus-visible {
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
+  white-space: nowrap;
+}
+
+.segment:hover {
+  color: var(--color-fg);
 }
 
 .segment.active {
@@ -1805,7 +1813,7 @@ kbd {
   /* Floats over the editor as a right-hand drawer so the three main panes keep
      their width whether or not the glossary is open. */
   position: fixed;
-  top: 56px;
+  top: 64px;
   right: 0;
   bottom: 0;
   width: min(400px, 100%);
