@@ -54,7 +54,10 @@ export async function materializeLanguage(
     const draft = draftMap.get(key);
     const repoValue = targetMap.get(key);
     const value = draft?.value ?? repoValue ?? '';
-    const status: CatalogRowStatus = draft?.status ?? (repoValue ? 'shipped' : 'missing');
+    // A value that exists only in the live repo (no local draft) still wants a
+    // review pass here, so surface it as 'translated' (Needs review) rather than
+    // a separate "Live" bucket that sits outside the workflow.
+    const status: CatalogRowStatus = draft?.status ?? (repoValue ? 'translated' : 'missing');
     const check = checkPlaceholders(source, value);
 
     rows.push({

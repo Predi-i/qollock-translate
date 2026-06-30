@@ -666,11 +666,16 @@ export default function TranslatorApp() {
     const key = row.key;
     const value = rawValue;
     const wasReviewed = row.status === 'reviewed';
+    const valueChanged = value !== (savedValues.current.get(key) ?? '');
     // The server has the final say on the stage (it enforces the reviewer role),
-    // but we predict it for the optimistic patch and the no-op short-circuit: a
-    // reviewer's edit approves, everyone else's lands in needs-review. An explicit
-    // opts.review (the Approve toggle) overrides the default.
-    const review = value.trim() ? (opts.review ?? isReviewerRef.current) : false;
+    // but we predict it for the optimistic patch and the no-op short-circuit. A
+    // reviewer's *edit* approves; merely blurring or clicking away an unchanged
+    // row must NOT approve it (that is what the explicit Approve button is for),
+    // so without a real change we keep whatever stage the row already had.
+    // opts.review (the Approve toggle) always wins.
+    const review = value.trim()
+      ? opts.review ?? (isReviewerRef.current && valueChanged ? true : wasReviewed)
+      : false;
     const statusChanged = review !== wasReviewed;
     const prior = savedValues.current.get(key) ?? '';
 
@@ -1109,20 +1114,23 @@ export default function TranslatorApp() {
   const insertIntoDraft = useCallback((key: string, token: string, padded = false) => {
     const el = document.getElementById(`tx-${key}`) as HTMLTextAreaElement | null;
     // A whole-word insert (glossary term) into a box that already holds exactly
-    // that word — typically a not-yet-accepted glossary prefill — would otherwise
-    // double it ("Discord Discord"). Treat the click as "already there": leave the
-    // value alone and just put the cursor back in the box.
-    const skipDuplicate = padded && !!token.trim();
+    // that word — typically a not-yet-accepted glossary prefill, or a "keep" term
+    // the translator already typed — would otherwise double it ("Discord Discord"
+    // or "DISCORD Discord"). Match case-insensitively and treat the click as
+    // "already there": leave the value alone and just put the cursor back.
+    const tokenTrim = token.trim();
+    const alreadyThere = (current: string) =>
+      padded && !!tokenTrim && current.trim().toLowerCase() === tokenTrim.toLowerCase();
     if (!el) {
       setDrafts((d) => {
         const cur = d[key] ?? '';
-        if (skipDuplicate && cur.trim() === token.trim()) return d;
+        if (alreadyThere(cur)) return d;
         const next = padded && cur && !cur.endsWith(' ') ? `${cur} ${token}` : `${cur}${token}`;
         return { ...d, [key]: next };
       });
       return;
     }
-    if (skipDuplicate && el.value.trim() === token.trim()) {
+    if (alreadyThere(el.value)) {
       requestAnimationFrame(() => {
         el.focus();
         el.setSelectionRange(el.value.length, el.value.length);
