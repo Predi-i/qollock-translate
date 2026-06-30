@@ -296,6 +296,9 @@ export default function TranslatorApp() {
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('open');
+  // The string currently open in the focus editor (Crowdin-style: pick on the
+  // left, edit on the right). null = nothing selected yet / empty list.
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savingKeys, setSavingKeys] = useState<Record<string, boolean>>({});
   const [savedKeys, setSavedKeys] = useState<Record<string, boolean>>({});
@@ -349,6 +352,9 @@ export default function TranslatorApp() {
   // one box never re-renders the other ~60 rows) while still reading fresh state.
   const selectedLanguageRef = useRef(selectedLanguage);
   const orderedKeysRef = useRef<string[]>([]);
+  // Set true right before we change selectedKey via keyboard/click so the editor
+  // textarea grabs focus once it has rendered for the newly selected string.
+  const focusEditorRef = useRef(false);
   // Keys we have already auto-filled from the glossary this language load, so the
   // prefill effect never re-seeds a box the translator cleared or edited.
   const prefilledRef = useRef<Set<string>>(new Set());
@@ -944,6 +950,34 @@ export default function TranslatorApp() {
   const orderedKeys = useMemo(() => filteredRows.map((row) => row.key), [filteredRows]);
   orderedKeysRef.current = orderedKeys;
 
+  // Keep a valid string open in the editor: if the current pick falls out of the
+  // visible list (filter/search/language change), fall back to the first row.
+  useEffect(() => {
+    if (orderedKeys.length === 0) {
+      if (selectedKey !== null) setSelectedKey(null);
+    } else if (!selectedKey || !orderedKeys.includes(selectedKey)) {
+      setSelectedKey(orderedKeys[0]);
+    }
+  }, [orderedKeys, selectedKey]);
+
+  // After a keyboard/click selection, move focus into the editor textarea once it
+  // has rendered for the new string.
+  useEffect(() => {
+    if (!focusEditorRef.current || !selectedKey) return;
+    focusEditorRef.current = false;
+    const el = document.getElementById(`tx-${selectedKey}`) as HTMLTextAreaElement | null;
+    if (el) {
+      el.focus();
+      const len = el.value.length;
+      el.setSelectionRange(len, len);
+    }
+  }, [selectedKey]);
+
+  const selectRow = useCallback((key: string, focusEditor = true) => {
+    focusEditorRef.current = focusEditor;
+    setSelectedKey(key);
+  }, []);
+
   const groups = useMemo<RowGroup[]>(() => {
     // Bucket by the A–Z section so case-only ordering quirks (lowercase keys sort
     // after uppercase) don't split one letter into two headers. Letters first, "#"
@@ -1107,20 +1141,22 @@ export default function TranslatorApp() {
     [insertIntoDraft]
   );
 
+  // Open a string in the editor and focus its textarea (used after undo).
   function focusKey(key: string | undefined) {
     if (!key) return;
-    const el = document.getElementById(`tx-${key}`) as HTMLTextAreaElement | null;
-    if (el) {
-      el.focus();
-      el.scrollIntoView({ block: 'nearest' });
-    }
+    focusEditorRef.current = true;
+    setSelectedKey(key);
   }
 
+  // Step the editor to the previous/next visible string.
   const moveFocus = useCallback((currentKey: string, dir: 1 | -1) => {
     const keys = orderedKeysRef.current;
     const idx = keys.indexOf(currentKey);
     if (idx === -1) return;
-    focusKey(keys[idx + dir]);
+    const next = keys[idx + dir];
+    if (!next) return;
+    focusEditorRef.current = true;
+    setSelectedKey(next);
   }, []);
 
   const handleChange = useCallback((key: string, value: string) => {
@@ -1301,6 +1337,7 @@ export default function TranslatorApp() {
   const exportHref = selectedLanguage ? `/api/export?lang=${encodeURIComponent(selectedLanguage)}` : '#';
   const activeLanguage = languages.find((l) => l.code === selectedLanguage);
   const activeLanguageName = activeLanguage?.name ?? selectedLanguage;
+  const selectedRow = selectedKey ? catalog?.rows.find((row) => row.key === selectedKey) ?? null : null;
 
   return (
     <div className="shell">
@@ -1461,7 +1498,7 @@ export default function TranslatorApp() {
           </section>
         </main>
       ) : (
-        <main className={`workspace workspace--inline ${glossaryOpen ? 'workspace--glossary' : ''}`}>
+        <main className={`workspace ${glossaryOpen ? 'workspace--glossary' : ''}`}>
         <aside className="rail">
           <div className="section">
             <div className="section-title">Languages</div>
@@ -1709,32 +1746,56 @@ export default function TranslatorApp() {
                     <span className="list-group-count">{group.rows.length}</span>
                   </div>
                   {group.rows.map((row) => (
-                    <TranslationRow
+                    <StringListItem
                       key={row.key}
                       row={row}
                       value={drafts[row.key] ?? ''}
-                      saving={!!savingKeys[row.key]}
-                      saved={!!savedKeys[row.key]}
-                      error={rowErrors[row.key]}
-                      activeLanguageName={activeLanguageName}
-                      glossaryPrefill={glossaryPrefills.get(row.key)}
-                      glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
-                      suggestions={suggestionsByKey.get(row.key) ?? EMPTY_SUGGESTIONS}
-                      onAcceptSuggestion={acceptSuggestion}
-                      onRejectSuggestion={rejectSuggestion}
-                      onChange={handleChange}
-                      onKeyDown={onRowKeyDown}
-                      onBlur={commitRow}
-                      onToggleCheck={toggleCheck}
-                      onToggleReview={toggleReview}
-                      onInsertPlaceholder={insertPlaceholder}
-                      onInsertGlossaryTerm={insertGlossaryTerm}
+                      active={row.key === selectedKey}
+                      hasSuggestion={suggestionsByKey.has(row.key)}
+                      onSelect={selectRow}
                     />
                   ))}
                 </div>
               ))
             )}
           </div>
+        </section>
+
+        <section className="editor-pane">
+          {selectedRow ? (
+            <TranslationRow
+              key={selectedRow.key}
+              row={selectedRow}
+              value={drafts[selectedRow.key] ?? ''}
+              saving={!!savingKeys[selectedRow.key]}
+              saved={!!savedKeys[selectedRow.key]}
+              error={rowErrors[selectedRow.key]}
+              activeLanguageName={activeLanguageName}
+              glossaryPrefill={glossaryPrefills.get(selectedRow.key)}
+              glossaryMatches={glossaryMatchesByKey.get(selectedRow.key) ?? EMPTY_GLOSSARY_MATCHES}
+              suggestions={suggestionsByKey.get(selectedRow.key) ?? EMPTY_SUGGESTIONS}
+              onAcceptSuggestion={acceptSuggestion}
+              onRejectSuggestion={rejectSuggestion}
+              onChange={handleChange}
+              onKeyDown={onRowKeyDown}
+              onBlur={commitRow}
+              onToggleCheck={toggleCheck}
+              onToggleReview={toggleReview}
+              onInsertPlaceholder={insertPlaceholder}
+              onInsertGlossaryTerm={insertGlossaryTerm}
+            />
+          ) : (
+            <div className="editor-empty">
+              <BookOpen size={30} />
+              <p>
+                {!catalog
+                  ? 'Pick or add a language to start translating.'
+                  : filteredRows.length === 0
+                    ? 'Nothing to edit in this filter.'
+                    : 'Select a string on the left to start translating.'}
+              </p>
+            </div>
+          )}
         </section>
 
         {glossaryOpen ? (
@@ -2053,6 +2114,48 @@ interface TranslationRowProps {
   onInsertPlaceholder: (key: string, name: string) => void;
   onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
 }
+
+interface StringListItemProps {
+  row: CatalogRow;
+  value: string;
+  active: boolean;
+  hasSuggestion: boolean;
+  onSelect: (key: string) => void;
+}
+
+// Compact left-hand list row: source on top, translation preview below, a status
+// dot, and (optionally) a suggestion marker. Clicking opens it in the editor.
+const StringListItem = memo(function StringListItem({
+  row,
+  value,
+  active,
+  hasSuggestion,
+  onSelect,
+}: StringListItemProps) {
+  const live = checkPlaceholders(row.source, value);
+  const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
+  const meta = statusMeta(row.status, flagged, row.needsReview);
+  const preview = value.trim();
+  return (
+    <button
+      type="button"
+      className={`slist-item ${active ? 'active' : ''}`}
+      aria-current={active}
+      onClick={() => onSelect(row.key)}
+    >
+      <span className={`slist-dot ${meta.cls}`} title={meta.label} aria-hidden="true" />
+      <span className="slist-texts">
+        <span className="slist-source">{row.source}</span>
+        <span className={`slist-target ${preview ? '' : 'empty'}`}>{preview || 'Untranslated'}</span>
+      </span>
+      {hasSuggestion ? (
+        <span className="slist-sugg" title="Has a suggestion">
+          <Lightbulb size={13} />
+        </span>
+      ) : null}
+    </button>
+  );
+});
 
 // One translation row, memoized so a keystroke only re-renders the row being
 // edited instead of the whole catalog. All handler props are stable
