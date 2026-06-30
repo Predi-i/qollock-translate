@@ -2711,7 +2711,9 @@ function StringHelper({
                     )}
                   </button>
                   {term.notes ? <p className="helper-gloss-note">{term.notes}</p> : null}
-                  {term.updatedBy ? <p className="helper-gloss-by">— {term.updatedBy}</p> : null}
+                  {attributionLabel(term.updatedBy) ? (
+                    <p className="helper-gloss-by">— {attributionLabel(term.updatedBy)}</p>
+                  ) : null}
                 </li>
               );
             })}
@@ -2733,10 +2735,10 @@ function StringHelper({
             {value.length} / {row.source.length}
             <span className="helper-hint"> ({activeLanguageName || 'translation'} / source chars)</span>
           </dd>
-          {row.translatorEmail ? (
+          {attributionLabel(row.translatorEmail) ? (
             <>
               <dt>Last edited by</dt>
-              <dd>{row.translatorEmail}</dd>
+              <dd>{attributionLabel(row.translatorEmail)}</dd>
             </>
           ) : null}
           {row.updatedAt ? (
@@ -2980,6 +2982,15 @@ function formatDate(value: string): string {
   });
 }
 
+// Attribution to display next to a glossary term. We now store the GitHub login
+// (no '@'), but older rows hold a raw email from before that change. An email
+// can't be turned back into a login (it may be a personal address, not the
+// GitHub noreply form), so rather than show it we hide the byline entirely.
+function attributionLabel(value: string | null): string | null {
+  if (!value || value.includes('@')) return null;
+  return value;
+}
+
 function buildGlossaryCandidates(rows: CatalogRow[]): GlossaryCandidate[] {
   const candidates = new Map<string, { sourceTerm: string; count: number; examples: string[]; priority: number }>();
 
@@ -3154,7 +3165,9 @@ function GlossaryMark({ text, term }: { text: string; term: GlossaryTerm }) {
           )}
         </span>
         {term.notes ? <span className="gloss-tip-note">{term.notes}</span> : null}
-        {term.updatedBy ? <span className="gloss-tip-by">— {term.updatedBy}</span> : null}
+        {attributionLabel(term.updatedBy) ? (
+          <span className="gloss-tip-by">— {attributionLabel(term.updatedBy)}</span>
+        ) : null}
       </span>
     </span>
   );
