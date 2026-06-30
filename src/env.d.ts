@@ -42,6 +42,9 @@ type Env = {
   // Optional comma/space-separated GitHub login allowlist. Empty/unset = any
   // GitHub account may sign in (PRs are reviewed before merge anyway).
   ALLOWED_GITHUB_USERS?: string;
+  // Comma/space-separated GitHub logins who may approve. Their edits land as
+  // "approved"; everyone else's edits go to "needs review". Empty = no reviewers.
+  REVIEWER_GITHUB_USERS?: string;
   TRANSLATOR_EMAIL?: string;
   SOCIAL_BASE_URL?: string;
 };
@@ -53,5 +56,9 @@ declare module 'cloudflare:workers' {
 declare namespace App {
   interface Locals {
     translatorEmail: string;
+    // GitHub login of the signed-in translator (stable handle; '' in dev).
+    translatorLogin: string;
+    // Whether the signed-in user is a reviewer (REVIEWER_GITHUB_USERS).
+    isReviewer: boolean;
   }
 }

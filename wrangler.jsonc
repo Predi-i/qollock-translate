@@ -28,7 +28,11 @@
     // https://<your-worker-url>/auth/callback, and paste the Client ID here.
     // The matching secret is NOT stored here — set it with:
     //   pnpm exec wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
-    "GITHUB_OAUTH_CLIENT_ID": "Ov23licf6JqecYgqY0sC"
+    "GITHUB_OAUTH_CLIENT_ID": "Ov23licf6JqecYgqY0sC",
+    // GitHub logins (comma/space list) allowed to APPROVE translations. Their
+    // edits land approved and they can approve others' work; everyone else's
+    // edits go to "needs review". Empty/omit = nobody can approve.
+    "REVIEWER_GITHUB_USERS": "Predi-i Cactus330 des3252 Drodn1101 mustafaberke123 bzihnali BreadRollius RizoBoy NicholasBellDev"
     // Optional: restrict sign-in to specific GitHub logins (comma/space list).
     // Omit to let any GitHub account translate (PRs are reviewed before merge).
     // "ALLOWED_GITHUB_USERS": "Predi-i civo7"

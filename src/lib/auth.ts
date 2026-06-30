@@ -33,6 +33,7 @@ interface OAuthEnv {
   GITHUB_OAUTH_CLIENT_ID: string;
   GITHUB_OAUTH_CLIENT_SECRET: string;
   ALLOWED_GITHUB_USERS?: string;
+  REVIEWER_GITHUB_USERS?: string;
 }
 
 // ── Cookies ───────────────────────────────────────────────────────────────
@@ -188,9 +189,22 @@ export async function exchangeCodeForIdentity(
 export function isLoginAllowed(env: OAuthEnv, login: string): boolean {
   const raw = (env.ALLOWED_GITHUB_USERS ?? '').trim();
   if (!raw) return true;
-  const allowed = raw
+  return parseLoginList(raw).includes(login.toLowerCase());
+}
+
+// Reviewers are named in REVIEWER_GITHUB_USERS (comma/space list of GitHub
+// logins). A reviewer's edits land approved and they can approve others' work;
+// everyone else's edits go to "needs review". Empty/unset means no reviewers,
+// so set it for the people who should be able to approve.
+export function isReviewer(env: OAuthEnv, login: string): boolean {
+  const raw = (env.REVIEWER_GITHUB_USERS ?? '').trim();
+  if (!raw) return false;
+  return parseLoginList(raw).includes(login.toLowerCase());
+}
+
+function parseLoginList(raw: string): string[] {
+  return raw
     .split(/[\s,]+/)
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
-  return allowed.includes(login.toLowerCase());
 }

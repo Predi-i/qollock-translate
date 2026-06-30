@@ -1,6 +1,6 @@
 import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
-import { getSession } from './lib/auth';
+import { getSession, isReviewer } from './lib/auth';
 
 // Auth gate. Translators sign in with GitHub (see src/lib/auth.ts); the session
 // lives in KV and is keyed by the `ql_session` cookie. Unauthenticated page
@@ -21,9 +21,12 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
     return next();
   }
 
-  // Local dev: skip OAuth entirely and run as a fixed identity.
+  // Local dev: skip OAuth entirely and run as a fixed identity. Treat the dev
+  // user as a reviewer so the approve flow can be exercised without a session.
   if (import.meta.env.DEV) {
     ctx.locals.translatorEmail = env.TRANSLATOR_EMAIL || 'local-dev@qollock';
+    ctx.locals.translatorLogin = 'local-dev';
+    ctx.locals.isReviewer = true;
     return next();
   }
 
@@ -39,5 +42,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
   }
 
   ctx.locals.translatorEmail = session.email;
+  ctx.locals.translatorLogin = session.login;
+  ctx.locals.isReviewer = isReviewer(env, session.login);
   return next();
 });

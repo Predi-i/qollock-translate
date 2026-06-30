@@ -10,7 +10,6 @@ interface SaveTranslationBody {
   key?: string;
   value?: string;
   status?: 'translated' | 'reviewed';
-  needsReview?: boolean;
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -24,9 +23,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const languageCode = (body.languageCode ?? '').trim();
   const key = (body.key ?? '').trim();
   const value = body.value ?? '';
-  const status = body.status === 'reviewed' ? 'reviewed' : 'translated';
-  // Approving (reviewed) clears the flag; otherwise trust the client's flag state.
-  const needsReview = status === 'reviewed' ? false : !!body.needsReview;
+  // Role decides the stage. A reviewer's save lands approved (they may explicitly
+  // send it back with status:'translated'); everyone else's edit goes to "needs
+  // review", so we ignore a non-reviewer asking for 'reviewed'. needs_review is
+  // kept only for import-undo's untouched-row guard, not for display.
+  const status = locals.isReviewer && body.status !== 'translated' ? 'reviewed' : 'translated';
+  const needsReview = status === 'translated';
 
   if (!isLanguageCode(languageCode)) return badRequest('invalid language code');
   if (!key) return badRequest('missing translation key');

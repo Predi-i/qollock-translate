@@ -741,6 +741,45 @@ textarea:focus-visible {
   color: var(--color-fg);
 }
 
+/* Issues / Suggestions are cross-cutting chips, not workflow stages: set them
+   apart from the stage segments and tint Issues red so a broken placeholder
+   reads as a problem at a glance. */
+.segment.chip-issue,
+.segment.chip-suggest {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  border-radius: 999px;
+}
+
+.segment.chip-issue {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.segment.chip-issue:hover,
+.segment.chip-issue.active {
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.7);
+  background: rgba(239, 68, 68, 0.16);
+}
+
+.segment.chip-suggest {
+  color: #c4b5fd;
+  border-color: rgba(139, 92, 246, 0.4);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.segment.chip-suggest:hover,
+.segment.chip-suggest.active {
+  color: #ddd6fe;
+  border-color: rgba(139, 92, 246, 0.7);
+  background: rgba(139, 92, 246, 0.16);
+}
+
 .key-list {
   flex: 1;
   min-height: 0;
@@ -2090,10 +2129,12 @@ kbd {
   background: rgba(34, 197, 94, 0.08);
 }
 
-.chk-flag.on {
-  border-color: rgba(20, 184, 166, 0.5);
-  color: #5eead4;
-  background: rgba(20, 184, 166, 0.08);
+/* Shown to non-reviewers in place of the Approve button: their save is in, a
+   reviewer takes it from here. */
+.trow-hint {
+  font-size: 11.5px;
+  color: var(--color-muted);
+  font-style: italic;
 }
 
 .chk:disabled {
