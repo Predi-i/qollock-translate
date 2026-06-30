@@ -2262,7 +2262,7 @@ const TranslationRow = memo(function TranslationRow({
   return (
     <div className={`trow ${flagged ? 'trow-flagged' : ''}`}>
       <div className="trow-en">
-        <span className="trow-en-text">{row.source}</span>
+        <SourceWithGlossary source={row.source} matches={glossaryMatches} />
         <span className={`badge ${meta.cls}`}>{meta.label}</span>
       </div>
       {suggestions.length > 0 ? (
@@ -2758,6 +2758,89 @@ function buildGlossaryItems(
       item.notes.toLowerCase().includes(needle)
     );
   });
+}
+
+// A run of source text, either plain or a glossary hit carrying its term so the
+// editor can underline it and show a hover tooltip.
+type SourceSegment = string | { text: string; term: GlossaryTerm };
+
+// Split the English source into plain runs and glossary hits. Longer terms are
+// claimed first so "ability duration" wins over a bare "ability", and we mirror
+// matchesGlossaryTerm's word-boundary rule so we only mark whole words.
+function splitSourceByGlossary(source: string, matches: GlossaryTerm[]): SourceSegment[] {
+  if (matches.length === 0) return [source];
+  const terms = [...matches].sort((a, b) => b.sourceTerm.length - a.sourceTerm.length);
+  const ranges: Array<{ start: number; end: number; term: GlossaryTerm }> = [];
+  for (const term of terms) {
+    const normalized = term.sourceTerm.replace(/\s+/g, ' ').trim();
+    if (!normalized) continue;
+    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    const re = new RegExp(`(^|[^A-Za-z0-9])(${escaped})($|[^A-Za-z0-9])`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source))) {
+      const start = m.index + m[1].length;
+      const end = start + m[2].length;
+      // Keep the trailing boundary char available for the next iteration so two
+      // adjacent terms separated by a single space both still match.
+      re.lastIndex = end;
+      if (ranges.some((r) => start < r.end && end > r.start)) continue;
+      ranges.push({ start, end, term });
+    }
+  }
+  if (ranges.length === 0) return [source];
+  ranges.sort((a, b) => a.start - b.start);
+  const out: SourceSegment[] = [];
+  let cursor = 0;
+  for (const r of ranges) {
+    if (r.start > cursor) out.push(source.slice(cursor, r.start));
+    out.push({ text: source.slice(r.start, r.end), term: r.term });
+    cursor = r.end;
+  }
+  if (cursor < source.length) out.push(source.slice(cursor));
+  return out;
+}
+
+// English source line in the editor, with any glossary words underlined and
+// hover-explained. Falls back to a plain span when nothing matches.
+function SourceWithGlossary({ source, matches }: { source: string; matches: GlossaryTerm[] }) {
+  const segments = useMemo(() => splitSourceByGlossary(source, matches), [source, matches]);
+  if (segments.length === 1 && typeof segments[0] === 'string') {
+    return <span className="trow-en-text">{source}</span>;
+  }
+  return (
+    <span className="trow-en-text">
+      {segments.map((seg, i) =>
+        typeof seg === 'string' ? (
+          <span key={i}>{seg}</span>
+        ) : (
+          <GlossaryMark key={i} text={seg.text} term={seg.term} />
+        )
+      )}
+    </span>
+  );
+}
+
+// One underlined glossary word plus its hover/focus tooltip: target term, the
+// author's note, and who set it.
+function GlossaryMark({ text, term }: { text: string; term: GlossaryTerm }) {
+  const keep = term.sourceTerm.toLowerCase() === term.targetTerm.toLowerCase();
+  return (
+    <span className="gloss-mark" tabIndex={0}>
+      {text}
+      <span className="gloss-tip" role="tooltip">
+        <span className="gloss-tip-head">
+          <span className="gloss-tip-src">{term.sourceTerm}</span>
+          {keep ? (
+            <span className="gloss-tip-keep">keep as-is</span>
+          ) : (
+            <span className="gloss-tip-tgt">{term.targetTerm}</span>
+          )}
+        </span>
+        {term.notes ? <span className="gloss-tip-note">{term.notes}</span> : null}
+        {term.updatedBy ? <span className="gloss-tip-by">— {term.updatedBy}</span> : null}
+      </span>
+    </span>
+  );
 }
 
 function buildGlossaryMatches(
