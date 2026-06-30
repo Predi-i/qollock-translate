@@ -1637,6 +1637,21 @@ kbd {
   padding: 0;
 }
 
+.glossary-add {
+  display: flex;
+  gap: 6px;
+}
+
+.glossary-add-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.glossary-add-btn {
+  flex: none;
+  padding-inline: 12px;
+}
+
 .glossary-error {
   margin-top: 0;
 }

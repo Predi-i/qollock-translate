@@ -333,6 +333,10 @@ export default function TranslatorApp() {
   // the "To fill" filter) so a card never vanishes out from under the cursor
   // before the translator is done. Cleared on filter switch or language reload.
   const [pinnedGlossary, setPinnedGlossary] = useState<Record<string, boolean>>({});
+  // Source terms the translator added by hand (not auto-detected). They surface
+  // as count-0 "custom" cards so any word can be put in the glossary, even one
+  // that appears only inside longer phrases like "ability duration".
+  const [customGlossaryTerms, setCustomGlossaryTerms] = useState<string[]>([]);
   const [glossaryError, setGlossaryError] = useState('');
 
   const savedValues = useRef<Map<string, string>>(new Map());
@@ -423,6 +427,7 @@ export default function TranslatorApp() {
     setSubmitPhase('idle');
     setSubmitCountdown(0);
     setPrResult(null);
+    setCustomGlossaryTerms([]);
     if (selectedLanguage) {
       void loadCatalog(selectedLanguage);
       void loadGlossary(selectedLanguage);
@@ -962,9 +967,19 @@ export default function TranslatorApp() {
   }, [filteredRows]);
 
   const glossaryCandidates = useMemo(() => buildGlossaryCandidates(catalog?.rows ?? []), [catalog]);
+  // Hand-added terms ride alongside the auto-detected ones as count-0 entries so
+  // they render and can be filled/saved like any other card.
+  const glossaryCandidatesWithCustom = useMemo(() => {
+    if (customGlossaryTerms.length === 0) return glossaryCandidates;
+    const known = new Set(glossaryCandidates.map((c) => c.sourceTerm.toLowerCase()));
+    const extra = customGlossaryTerms
+      .filter((term) => !known.has(term.toLowerCase()))
+      .map((sourceTerm) => ({ sourceTerm, count: 0, examples: [] as string[] }));
+    return [...extra, ...glossaryCandidates];
+  }, [glossaryCandidates, customGlossaryTerms]);
   const glossaryItems = useMemo(
-    () => buildGlossaryItems(glossaryCandidates, glossary, glossaryQuery, glossaryFilter, pinnedGlossary),
-    [glossaryCandidates, glossary, glossaryQuery, glossaryFilter, pinnedGlossary]
+    () => buildGlossaryItems(glossaryCandidatesWithCustom, glossary, glossaryQuery, glossaryFilter, pinnedGlossary),
+    [glossaryCandidatesWithCustom, glossary, glossaryQuery, glossaryFilter, pinnedGlossary]
   );
   const glossaryMatchesByKey = useMemo(
     () => buildGlossaryMatches(catalog?.rows ?? [], Object.values(glossary), glossaryCandidates),
@@ -1124,6 +1139,29 @@ export default function TranslatorApp() {
     },
     [glossary]
   );
+
+  const addCustomGlossaryTerm = useCallback((rawTerm: string): boolean => {
+    const sourceTerm = rawTerm.replace(/\s+/g, ' ').trim();
+    if (!sourceTerm) return false;
+    if (sourceTerm.length > 80) {
+      setGlossaryError('Term is too long (max 80 characters).');
+      return false;
+    }
+    if (isLockedGlossaryTerm(sourceTerm)) {
+      setGlossaryError(`"${sourceTerm}" is a locked term and is kept as-is.`);
+      return false;
+    }
+    setGlossaryError('');
+    setCustomGlossaryTerms((terms) =>
+      terms.some((term) => term.toLowerCase() === sourceTerm.toLowerCase()) ? terms : [sourceTerm, ...terms]
+    );
+    setGlossaryDrafts((drafts) =>
+      drafts[sourceTerm] ? drafts : { ...drafts, [sourceTerm]: { targetTerm: '', notes: '' } }
+    );
+    setPinnedGlossary((pins) => ({ ...pins, [sourceTerm.toLowerCase()]: true }));
+    setGlossaryFilter('missing');
+    return true;
+  }, []);
 
   const saveGlossaryTerm = useCallback(
     async (sourceTerm: string) => {
@@ -1332,7 +1370,7 @@ export default function TranslatorApp() {
           <button
             className={`btn ${view === 'contributors' ? 'btn-secondary' : ''}`}
             type="button"
-            title="Manage Steam-authenticated translation contributors"
+            title="Manage GitHub-authenticated translation contributors"
             onClick={() => setView(view === 'contributors' ? 'translations' : 'contributors')}
           >
             <Users size={16} />
@@ -1349,7 +1387,7 @@ export default function TranslatorApp() {
                 <div>
                   <div className="section-title">Contributors</div>
                   <div className="admin-subtitle">
-                    Steam users appear here after they enter Translation Mode in {SITE.clientName}.
+                    GitHub users appear here after they sign in and start translating {SITE.clientName}.
                   </div>
                 </div>
                 <button className="btn" type="button" disabled={!!busy} onClick={() => void loadContributors()}>
@@ -1366,7 +1404,7 @@ export default function TranslatorApp() {
 
             <div className="contributor-list">
               {contributors.length === 0 ? (
-                <div className="empty">No Steam contributors yet.</div>
+                <div className="empty">No GitHub contributors yet.</div>
               ) : (
                 contributors.map((contributor) => (
                   <div className="contributor-row" key={contributor.id}>
@@ -1720,6 +1758,7 @@ export default function TranslatorApp() {
             onDraftChange={handleGlossaryDraftChange}
             onSave={saveGlossaryTerm}
             onDelete={deleteGlossaryTerm}
+            onAddTerm={addCustomGlossaryTerm}
           />
         ) : null}
       </main>
@@ -2309,6 +2348,7 @@ interface GlossaryPanelProps {
   onDraftChange: (sourceTerm: string, patch: Partial<GlossaryDraft>) => void;
   onSave: (sourceTerm: string) => void;
   onDelete: (sourceTerm: string) => void;
+  onAddTerm: (sourceTerm: string) => boolean;
 }
 
 function GlossaryPanel({
@@ -2328,7 +2368,12 @@ function GlossaryPanel({
   onDraftChange,
   onSave,
   onDelete,
+  onAddTerm,
 }: GlossaryPanelProps) {
+  const [newTerm, setNewTerm] = useState('');
+  const submitNewTerm = () => {
+    if (onAddTerm(newTerm)) setNewTerm('');
+  };
   return (
     <aside className="glossary-pane" aria-label="Glossary">
       <div className="glossary-head">
@@ -2368,6 +2413,29 @@ function GlossaryPanel({
               {label}
             </button>
           ))}
+        </div>
+        <div className="glossary-add">
+          <input
+            className="input glossary-add-input"
+            placeholder="Add any word to the glossary"
+            value={newTerm}
+            onChange={(event) => setNewTerm(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                submitNewTerm();
+              }
+            }}
+          />
+          <button
+            className="btn btn-primary glossary-add-btn"
+            type="button"
+            disabled={!newTerm.trim()}
+            onClick={submitNewTerm}
+          >
+            <Plus size={15} />
+            Add
+          </button>
         </div>
         {error ? (
           <div className="banner banner-error glossary-error">
@@ -2528,9 +2596,9 @@ function buildGlossaryCandidates(rows: CatalogRow[]): GlossaryCandidate[] {
   }
 
   return [...candidates.values()]
-    .filter((item) => item.priority > 0 || item.count >= 4)
+    .filter((item) => item.priority > 0 || item.count >= 2)
     .sort((a, b) => b.priority - a.priority || b.count - a.count || a.sourceTerm.localeCompare(b.sourceTerm))
-    .slice(0, 160)
+    .slice(0, 400)
     .map(({ sourceTerm, count, examples }) => ({ sourceTerm, count, examples }));
 }
 
