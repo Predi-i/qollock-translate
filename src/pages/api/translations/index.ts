@@ -1,7 +1,13 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { checkPlaceholders, isLanguageCode } from '../../../lib/catalog';
-import { deleteTranslation, getTranslation, languageExists, upsertTranslation } from '../../../lib/db';
+import {
+  deleteTranslation,
+  getTranslation,
+  languageExists,
+  recordTranslationHistory,
+  upsertTranslation,
+} from '../../../lib/db';
 import { fetchSourceEntries } from '../../../lib/github';
 import { badRequest, json, readJson } from '../../../lib/http';
 
@@ -40,8 +46,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const source = sourceMap.get(key);
   if (!source) return badRequest(`unknown source key: ${key}`);
 
+  // The string's value before this change, captured for the history log.
+  const prior = await getTranslation(env.TRANSLATE_DB, languageCode, key);
+
   if (!value.trim()) {
     await deleteTranslation(env.TRANSLATE_DB, languageCode, key);
+    // Only log a delete if there was something to remove.
+    if (prior) {
+      await logHistory({
+        languageCode,
+        key,
+        action: 'delete',
+        oldValue: prior.value,
+        newValue: null,
+        status: null,
+        changedBy: locals.translatorLogin,
+      });
+    }
     return json({ deleted: true });
   }
 
@@ -58,8 +79,31 @@ export const POST: APIRoute = async ({ request, locals }) => {
     value,
     status,
     needsReview,
-    translatorEmail: locals.translatorEmail,
+    // Attribution is shown as the GitHub nickname, so store the login.
+    translatorEmail: locals.translatorLogin,
+  });
+
+  // A reviewer's save that lands 'reviewed' is an approval; anything else is a
+  // plain edit (covers both first-time translations and later tweaks).
+  await logHistory({
+    languageCode,
+    key,
+    action: status === 'reviewed' ? 'approve' : 'edit',
+    oldValue: prior?.value ?? null,
+    newValue: value,
+    status,
+    changedBy: locals.translatorLogin,
   });
 
   return json({ translation: await getTranslation(env.TRANSLATE_DB, languageCode, key) });
 };
+
+// Logging must never sink an otherwise-good save, so swallow its errors.
+async function logHistory(entry: Parameters<typeof recordTranslationHistory>[1]): Promise<void> {
+  try {
+    await recordTranslationHistory(env.TRANSLATE_DB, entry);
+  } catch {
+    // History is a convenience log; a write failure here is not worth failing
+    // the user's edit over.
+  }
+}

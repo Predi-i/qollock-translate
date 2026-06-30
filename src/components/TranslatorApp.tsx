@@ -8,6 +8,7 @@ import {
   ExternalLink,
   GitPullRequest,
   HelpCircle,
+  History,
   Info,
   Languages,
   Lightbulb,
@@ -31,7 +32,7 @@ type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
 // then Untranslated -> Needs review -> Approved. 'flagged' (Issues) and
 // 'suggested' are cross-cutting filters surfaced as chips, not stages.
 type Filter = 'all' | 'untranslated' | 'review' | 'approved' | 'flagged' | 'suggested';
-type View = 'translations' | 'contributors';
+type View = 'translations' | 'contributors' | 'history';
 type ContributorRole = 'translator' | 'reviewer' | 'admin';
 type GlossaryFilter = 'missing' | 'saved' | 'all';
 
@@ -76,8 +77,20 @@ interface Contributor {
   banned_at: string | null;
   created_at: string;
   last_seen_at: string;
-  suggestion_count: number;
-  pending_suggestion_count: number;
+  translated_count: number;
+  reviewed_count: number;
+}
+
+// One change in the commit-style history log for the selected language.
+interface HistoryEntry {
+  id: number;
+  key: string;
+  action: 'edit' | 'approve' | 'import' | 'delete';
+  oldValue: string | null;
+  newValue: string | null;
+  status: string | null;
+  changedBy: string | null;
+  createdAt: string;
 }
 
 // A pending translation suggested from inside the client app. `stale` means
@@ -299,7 +312,9 @@ function computeStats(rows: CatalogRow[]): CatalogResponse['stats'] {
 
 export default function TranslatorApp() {
   const [view, setView] = useState<View>('translations');
-  const [email, setEmail] = useState('');
+  // GitHub login of the signed-in user, shown in the header. This is the same
+  // nickname used for attribution throughout (glossary notes, "Last edited by").
+  const [login, setLogin] = useState('');
   // Whether the signed-in user may approve. Reviewers' edits land approved and
   // they get an Approve button; everyone else's edits go to "needs review".
   const [isReviewer, setIsReviewer] = useState(false);
@@ -310,6 +325,7 @@ export default function TranslatorApp() {
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [contributors, setContributors] = useState<Contributor[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   // The string currently open in the focus editor (Crowdin-style: pick on the
@@ -494,6 +510,7 @@ export default function TranslatorApp() {
     if (selectedLanguage) {
       void loadCatalog(selectedLanguage);
       void loadGlossary(selectedLanguage);
+      if (view === 'history') void loadHistory(selectedLanguage);
     } else {
       setGlossary({});
       setGlossaryDrafts({});
@@ -503,16 +520,17 @@ export default function TranslatorApp() {
 
   useEffect(() => {
     if (view === 'contributors') void loadContributors();
+    if (view === 'history') void loadHistory();
   }, [view]);
 
   async function bootstrap() {
     setError('');
     try {
       const [sessionRes, languagesRes] = await Promise.all([
-        fetchJson<{ email: string; isReviewer?: boolean }>('/api/session'),
+        fetchJson<{ email: string; login: string; isReviewer?: boolean }>('/api/session'),
         fetchJson<{ languages: Language[] }>('/api/languages'),
       ]);
-      setEmail(sessionRes.email);
+      setLogin(sessionRes.login);
       setIsReviewer(!!sessionRes.isReviewer);
       setLanguages(languagesRes.languages);
       const first = languagesRes.languages[0]?.code ?? '';
@@ -594,6 +612,26 @@ export default function TranslatorApp() {
     try {
       const result = await fetchJson<{ contributors: Contributor[] }>('/api/contributors');
       setContributors(result.contributors);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function loadHistory(languageCode = selectedLanguage) {
+    if (!languageCode) {
+      setHistory([]);
+      return;
+    }
+    setBusy('history');
+    setError('');
+    try {
+      const result = await fetchJson<{ entries: HistoryEntry[] }>(
+        `/api/history?lang=${encodeURIComponent(languageCode)}`
+      );
+      if (selectedLanguageRef.current !== languageCode) return;
+      setHistory(result.entries);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1420,8 +1458,8 @@ export default function TranslatorApp() {
           <div>
             <div className="brand-title">{SITE.appName}</div>
             <div className="brand-subtitle">
-              {email || 'Loading account'}
-              {email ? (
+              {login || 'Loading account'}
+              {login ? (
                 <>
                   {' · '}
                   <a href="/auth/logout" className="signout-link">
@@ -1432,7 +1470,7 @@ export default function TranslatorApp() {
             </div>
           </div>
         </div>
-        {view === 'translations' ? (
+        {view === 'translations' || view === 'history' ? (
           <div className="lang-cluster">
             <div className="lang-select-wrap">
               <Languages size={15} />
@@ -1513,13 +1551,26 @@ export default function TranslatorApp() {
             className="btn"
             type="button"
             title="Reload the latest strings"
-            disabled={!!busy || (view === 'translations' && !selectedLanguage)}
-            onClick={() => (view === 'contributors' ? void loadContributors() : void loadCatalog())}
+            disabled={!!busy || ((view === 'translations' || view === 'history') && !selectedLanguage)}
+            onClick={() => {
+              if (view === 'contributors') void loadContributors();
+              else if (view === 'history') void loadHistory();
+              else void loadCatalog();
+            }}
           >
             <RefreshCw size={16} />
             Refresh
           </button>
           <span className="toolbar-divider" aria-hidden="true" />
+          <button
+            className={`btn ${view === 'history' ? 'btn-secondary' : ''}`}
+            type="button"
+            title="Change history for the selected language"
+            onClick={() => setView(view === 'history' ? 'translations' : 'history')}
+          >
+            <History size={16} />
+            History
+          </button>
           <button
             className={`btn ${view === 'contributors' ? 'btn-secondary' : ''}`}
             type="button"
@@ -1527,7 +1578,7 @@ export default function TranslatorApp() {
             onClick={() => setView(view === 'contributors' ? 'translations' : 'contributors')}
           >
             <Users size={16} />
-            {view === 'contributors' ? 'Translations' : 'Contributors'}
+            Contributors
           </button>
         </div>
       </header>
@@ -1540,7 +1591,7 @@ export default function TranslatorApp() {
                 <div>
                   <div className="section-title">Contributors</div>
                   <div className="admin-subtitle">
-                    GitHub users appear here after they sign in and start translating {SITE.clientName}.
+                    Everyone who signs in with GitHub to translate {SITE.clientName} appears here.
                   </div>
                 </div>
                 <button className="btn" type="button" disabled={!!busy} onClick={() => void loadContributors()}>
@@ -1587,26 +1638,101 @@ export default function TranslatorApp() {
                     </div>
                     <div className="contributor-stats">
                       <div>
-                        <span className="contributor-stat-value">{contributor.suggestion_count}</span>
-                        <span className="contributor-stat-label">suggestions</span>
+                        <span className="contributor-stat-value">{contributor.translated_count}</span>
+                        <span className="contributor-stat-label">translated</span>
                       </div>
-                      <div>
-                        <span className="contributor-stat-value">{contributor.pending_suggestion_count}</span>
-                        <span className="contributor-stat-label">pending</span>
+                      {contributor.reviewed_count > 0 ? (
+                        <div>
+                          <span className="contributor-stat-value">{contributor.reviewed_count}</span>
+                          <span className="contributor-stat-label">reviewed</span>
+                        </div>
+                      ) : null}
+                    </div>
+                    {/* Role changes are reviewer-only (enforced server-side too); show
+                        a static pill to everyone else rather than a dead dropdown. */}
+                    {isReviewer ? (
+                      <select
+                        className="select contributor-role"
+                        value={contributor.role}
+                        disabled={busy === `contributor:${contributor.id}`}
+                        onChange={(event) =>
+                          void updateContributorRole(contributor.id, event.target.value as ContributorRole)
+                        }
+                      >
+                        <option value="translator">Translator</option>
+                        <option value="reviewer">Reviewer</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    ) : (
+                      <span className="contributor-role-static">{contributor.role}</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </main>
+      ) : view === 'history' ? (
+        <main className="admin-workspace">
+          <section className="admin-pane">
+            <div className="section">
+              <div className="admin-head">
+                <div>
+                  <div className="section-title">Change history</div>
+                  <div className="admin-subtitle">
+                    Every save, approval, import, and deletion for{' '}
+                    {activeLanguageName || 'this language'}, newest first. The log
+                    starts from when this feature shipped.
+                  </div>
+                </div>
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={!!busy || !selectedLanguage}
+                  onClick={() => void loadHistory()}
+                >
+                  <RefreshCw size={16} />
+                  Refresh
+                </button>
+              </div>
+              {error ? (
+                <div className="banner banner-error">
+                  <span>{error}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="history-list">
+              {!selectedLanguage ? (
+                <div className="empty">Pick a language to see its history.</div>
+              ) : history.length === 0 ? (
+                <div className="empty">No changes recorded yet.</div>
+              ) : (
+                history.map((entry) => (
+                  <div className="history-row" key={entry.id}>
+                    <span className={`history-action history-action--${entry.action}`}>
+                      {entry.action}
+                    </span>
+                    <div className="history-main">
+                      <div className="history-key">{entry.key}</div>
+                      <div className="history-diff">
+                        {entry.oldValue ? (
+                          <span className="history-old">{entry.oldValue}</span>
+                        ) : null}
+                        {entry.oldValue && entry.newValue ? (
+                          <span className="history-arrow">→</span>
+                        ) : null}
+                        {entry.newValue ? (
+                          <span className="history-new">{entry.newValue}</span>
+                        ) : (
+                          <span className="history-removed">(removed)</span>
+                        )}
                       </div>
                     </div>
-                    <select
-                      className="select contributor-role"
-                      value={contributor.role}
-                      disabled={busy === `contributor:${contributor.id}`}
-                      onChange={(event) =>
-                        void updateContributorRole(contributor.id, event.target.value as ContributorRole)
-                      }
-                    >
-                      <option value="translator">Translator</option>
-                      <option value="reviewer">Reviewer</option>
-                      <option value="admin">Admin</option>
-                    </select>
+                    <div className="history-meta">
+                      <span className="history-by">{entry.changedBy || 'unknown'}</span>
+                      <span className="history-when">{formatDate(entry.createdAt)}</span>
+                    </div>
                   </div>
                 ))
               )}

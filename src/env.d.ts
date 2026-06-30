@@ -58,6 +58,8 @@ declare namespace App {
     translatorEmail: string;
     // GitHub login of the signed-in translator (stable handle; '' in dev).
     translatorLogin: string;
+    // GitHub avatar URL of the signed-in translator (null in dev / if unset).
+    translatorAvatar: string | null;
     // Whether the signed-in user is a reviewer (REVIEWER_GITHUB_USERS).
     isReviewer: boolean;
   }

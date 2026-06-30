@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { checkPlaceholders, flattenValues, isLanguageCode, type JsonObject } from '../../lib/catalog';
 import {
+  bulkRecordTranslationHistory,
   bulkUpsertTranslations,
   getLatestImportBatch,
   getTranslations,
@@ -127,7 +128,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       value,
       status: 'translated',
       needsReview: false,
-      translatorEmail: locals.translatorEmail,
+      translatorEmail: locals.translatorLogin,
     });
     entries.push({
       key,
@@ -168,9 +169,27 @@ export const POST: APIRoute = async ({ request, locals }) => {
     await recordImportBatch(env.TRANSLATE_DB, {
       id: batchId,
       languageCode,
-      translatorEmail: locals.translatorEmail,
+      translatorEmail: locals.translatorLogin,
       entries,
     });
+    // Mirror the import into the change history, one entry per written string.
+    // Best-effort: a logging failure should not fail an import that landed.
+    try {
+      await bulkRecordTranslationHistory(
+        env.TRANSLATE_DB,
+        entries.map((e) => ({
+          languageCode,
+          key: e.key,
+          action: 'import' as const,
+          oldValue: e.priorValue,
+          newValue: e.importedValue,
+          status: 'translated',
+          changedBy: locals.translatorLogin,
+        }))
+      );
+    } catch {
+      // History is a convenience log; never block the import on it.
+    }
   }
 
   return json({

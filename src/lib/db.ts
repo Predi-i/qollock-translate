@@ -28,8 +28,12 @@ export interface ContributorRow {
 }
 
 export interface ContributorDashboardRow extends ContributorRow {
-  suggestion_count: number;
-  pending_suggestion_count: number;
+  // Strings this contributor has translated / reviewed, counted from the
+  // translations table by attribution (translator_email / reviewer_email now
+  // hold the GitHub login). These replace the old social-suggestion tallies,
+  // which are always 0 for workbench translators.
+  translated_count: number;
+  reviewed_count: number;
 }
 
 export interface TranslationSuggestionRow {
@@ -457,6 +461,93 @@ export async function deleteTranslation(
     .run();
 }
 
+// ── Change history (commit-style log) ───────────────────────────────────────
+
+export type HistoryAction = 'edit' | 'approve' | 'import' | 'delete';
+
+export interface TranslationHistoryRow {
+  id: number;
+  language_code: string;
+  translation_key: string;
+  action: HistoryAction;
+  old_value: string | null;
+  new_value: string | null;
+  status: string | null;
+  changed_by: string | null;
+  created_at: string;
+}
+
+export interface TranslationHistoryEntry {
+  languageCode: string;
+  key: string;
+  action: HistoryAction;
+  oldValue: string | null;
+  newValue: string | null;
+  status: string | null;
+  changedBy: string;
+}
+
+const HISTORY_INSERT = `INSERT INTO translation_history (
+   language_code, translation_key, action, old_value, new_value, status, changed_by
+ )
+ VALUES (?, ?, ?, ?, ?, ?, ?)`;
+
+// Append one change to the history log. Best-effort: callers should not let a
+// logging failure undo a successful edit, so they wrap this in its own try.
+export async function recordTranslationHistory(
+  db: D1Database,
+  entry: TranslationHistoryEntry
+): Promise<void> {
+  await db
+    .prepare(HISTORY_INSERT)
+    .bind(
+      entry.languageCode,
+      entry.key,
+      entry.action,
+      entry.oldValue,
+      entry.newValue,
+      entry.status,
+      entry.changedBy
+    )
+    .run();
+}
+
+// Append many changes at once (e.g. one per string in a bulk import). Chunked
+// like the other bulk writers because D1 caps statements per batch.
+export async function bulkRecordTranslationHistory(
+  db: D1Database,
+  entries: TranslationHistoryEntry[]
+): Promise<void> {
+  const stmt = db.prepare(HISTORY_INSERT);
+  const CHUNK = 50;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const batch = entries.slice(i, i + CHUNK).map((e) =>
+      stmt.bind(e.languageCode, e.key, e.action, e.oldValue, e.newValue, e.status, e.changedBy)
+    );
+    if (batch.length) await db.batch(batch);
+  }
+}
+
+// Most recent changes for a language, newest first. Capped so the history view
+// stays a recent-activity log rather than an unbounded dump.
+export async function listTranslationHistory(
+  db: D1Database,
+  languageCode: string,
+  limit = 200
+): Promise<TranslationHistoryRow[]> {
+  const result = await db
+    .prepare<TranslationHistoryRow>(
+      `SELECT id, language_code, translation_key, action, old_value, new_value, status, changed_by, created_at
+       FROM translation_history
+       WHERE language_code = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    )
+    .bind(languageCode, limit)
+    .all();
+  return result.results ?? [];
+}
+
 export async function upsertContributor(
   db: D1Database,
   params: { id: string; displayName: string; avatarUrl: string | null }
@@ -633,6 +724,8 @@ export async function countPendingSuggestions(db: D1Database, languageCode: stri
 }
 
 export async function listContributors(db: D1Database): Promise<ContributorDashboardRow[]> {
+  // Scalar subqueries (not joins) for the counts so the two tallies stay
+  // independent — a join to translations would multiply rows and inflate them.
   const result = await db
     .prepare<ContributorDashboardRow>(
       `SELECT
@@ -644,11 +737,9 @@ export async function listContributors(db: D1Database): Promise<ContributorDashb
          c.banned_at,
          c.created_at,
          c.last_seen_at,
-         COUNT(s.id) AS suggestion_count,
-         COALESCE(SUM(CASE WHEN s.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_suggestion_count
+         (SELECT COUNT(*) FROM translations t WHERE t.translator_email = c.id) AS translated_count,
+         (SELECT COUNT(*) FROM translations t WHERE t.reviewer_email = c.id) AS reviewed_count
        FROM contributors c
-       LEFT JOIN translation_suggestions s ON s.contributor_id = c.id
-       GROUP BY c.id
        ORDER BY c.last_seen_at DESC`
     )
     .all();

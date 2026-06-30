@@ -26,6 +26,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
   if (import.meta.env.DEV) {
     ctx.locals.translatorEmail = env.TRANSLATOR_EMAIL || 'local-dev@qollock';
     ctx.locals.translatorLogin = 'local-dev';
+    ctx.locals.translatorAvatar = null;
     ctx.locals.isReviewer = true;
     return next();
   }
@@ -43,6 +44,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
 
   ctx.locals.translatorEmail = session.email;
   ctx.locals.translatorLogin = session.login;
+  ctx.locals.translatorAvatar = session.avatarUrl;
   ctx.locals.isReviewer = isReviewer(env, session.login);
   return next();
 });

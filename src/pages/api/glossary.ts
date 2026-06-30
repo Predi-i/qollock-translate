@@ -61,7 +61,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     sourceTerm,
     targetTerm,
     notes,
-    updatedBy: locals.translatorEmail,
+    // Attribute to the GitHub login (nickname), not the email.
+    updatedBy: locals.translatorLogin,
   });
 
   return json({ term: term ? publicTerm(term) : null });
