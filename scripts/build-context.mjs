@@ -5,12 +5,12 @@
  * Extracts a "English label → breadcrumb context" map from QOLLOCK's
  * ql_settings.js and writes it to src/data/qollock-context.json.
  *
- * Primary source: SETTING_DESCRIPTION_OVERRIDE_BY_CATEGORY_ROW
- *   Keys like "Tab / Section|Label" or "Tab|SectionTitle" tell us exactly
- *   where each translatable string appears in the settings UI.
- *
- * Fallback: static scan of CreateRow / CreateSectionTitle calls for literal
- *   string labels not covered by the description dict.
+ * Sources (in priority order):
+ *  1. SETTING_DESCRIPTION_OVERRIDE_BY_CATEGORY_ROW dict — exact Tab/Section/Label
+ *  2. CreateRow / CreateSectionTitle static scan inside RenderCurrentTabContent
+ *     — includes option-array labels that inherit their parent row's context
+ *  3. SETTINGS_RU_TEXT keys — catch-all for any remaining ql_settings string
+ *     that couldn't be placed in a specific section (generic "Settings" context)
  *
  * Usage:
  *   node scripts/build-context.mjs [path/to/ql_settings.js]
@@ -68,16 +68,12 @@ function parseStringDict(text, startPos, endPos) {
   const result = {};
   let i = startPos;
   while (i < endPos) {
-    // skip whitespace and commas
     if (/[\s,]/.test(text[i])) { i++; continue; }
-    // read key string
     if (text[i] !== '"' && text[i] !== "'") { i++; continue; }
     const keyResult = readStringAt(text, i);
     if (!keyResult) { i++; continue; }
     i = keyResult.end;
-    // skip : and whitespace
     while (i < endPos && /[\s:]/.test(text[i])) i++;
-    // read value string
     if (i >= endPos || (text[i] !== '"' && text[i] !== "'")) { i++; continue; }
     const valResult = readStringAt(text, i);
     if (!valResult) { i++; continue; }
@@ -108,9 +104,61 @@ function findDictBody(src, varName) {
   return { start, end: i - 1 };
 }
 
+/**
+ * Read the Nth argument (0-indexed) of a call whose opening paren is at openParen.
+ * Returns the raw text of the argument (trimmed), or null if not reachable.
+ */
+function readNthArg(text, openParen, n) {
+  let pos = openParen + 1;
+  let depth = 0;
+  let argNum = 0;
+  while (pos < text.length) {
+    const c = text[pos];
+    if (c === '(' || c === '[' || c === '{') { depth++; pos++; continue; }
+    if (c === ')' || c === ']' || c === '}') {
+      if (depth === 0) return null;
+      depth--;
+      pos++;
+      continue;
+    }
+    if (c === ',' && depth === 0) {
+      if (argNum === n) {
+        // The arg text starts after this comma
+        pos++;
+        while (pos < text.length && /[ \t\r\n]/.test(text[pos])) pos++;
+        // Read until next top-level comma or closing paren
+        const argStart = pos;
+        let d2 = 0;
+        while (pos < text.length) {
+          const ch = text[pos];
+          if (ch === '(' || ch === '[' || ch === '{') d2++;
+          else if (ch === ')' || ch === ']' || ch === '}') {
+            if (d2 === 0) break;
+            d2--;
+          } else if (ch === ',' && d2 === 0) break;
+          else if ((ch === '"' || ch === "'") && d2 === 0) {
+            const s = readStringAt(text, pos);
+            if (s) { pos = s.end; continue; }
+          }
+          pos++;
+        }
+        return text.slice(argStart, pos).trim();
+      }
+      argNum++;
+      pos++;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const s = readStringAt(text, pos);
+      if (s) { pos = s.end; continue; }
+    }
+    pos++;
+  }
+  return null;
+}
+
 // ── 3. Tab metadata ───────────────────────────────────────────────────────────
 
-// Tab → group from GetSettingsTabGroups()
 const tabGroupMap = {};
 {
   const m = src.match(/function GetSettingsTabGroups\(\)\s*\{([\s\S]*?)\n\}/);
@@ -126,10 +174,8 @@ const tabGroupMap = {};
   }
 }
 
-// Tab internal name → display name from GetSettingsTabDisplayName()
 const tabDisplayNames = {};
 {
-  // The function might span many lines so use brace matching
   const fnStart = src.indexOf('function GetSettingsTabDisplayName(');
   if (fnStart >= 0) {
     const bracePos = src.indexOf('{', fnStart);
@@ -157,10 +203,6 @@ function displayName(tab) {
 }
 
 // ── 4. Primary: SETTING_DESCRIPTION_OVERRIDE_BY_CATEGORY_ROW ─────────────────
-//
-// Key formats (internal tab names, not display names):
-//   "Tab|SectionTitle"          → SectionTitle is a top-level section in Tab
-//   "Tab / Section|Label"       → Label is a row inside Section in Tab
 
 const contextMap = {};
 
@@ -168,12 +210,11 @@ const primaryDictBody = findDictBody(src, 'SETTING_DESCRIPTION_OVERRIDE_BY_CATEG
 if (primaryDictBody) {
   const dict = parseStringDict(src, primaryDictBody.start, primaryDictBody.end);
   for (const [key, description] of Object.entries(dict)) {
-    // key formats: "Tab|Label" or "Tab / Section|Label"
     const pipeIdx = key.lastIndexOf('|');
     if (pipeIdx < 0) continue;
 
     const label = key.slice(pipeIdx + 1).trim();
-    const location = key.slice(0, pipeIdx).trim(); // "Tab" or "Tab / Section"
+    const location = key.slice(0, pipeIdx).trim();
     if (!label) continue;
 
     let tab, section;
@@ -183,7 +224,7 @@ if (primaryDictBody) {
       section = location.slice(slashIdx + 3).trim();
     } else {
       tab = location;
-      section = ''; // this key is a section title itself
+      section = '';
     }
 
     const dTab = displayName(tab);
@@ -193,20 +234,59 @@ if (primaryDictBody) {
     const entry = { breadcrumb, tab: dTab, section, group };
 
     if (!contextMap[label]) contextMap[label] = entry;
-    // The description text is also a translatable string in the same location
     if (description && !contextMap[description]) contextMap[description] = entry;
   }
 }
 
 console.log(`[build-context] Primary dict: ${Object.keys(contextMap).length} entries`);
 
-// ── 5. Fallback: CreateRow / CreateSectionTitle static scan ──────────────────
+// ── 5. Option arrays: const FOO = [{ label: "..." }, ...] ────────────────────
 //
-// Covers labels that appear only as literal strings in CreateRow calls,
-// not listed in the description override dict.
+// Build a map of variable name → Set<string label> so that when we see
+// CreateRow(..., FOO) in step 6 we can inherit the row's context to each label.
+
+const optionArrayLabels = new Map(); // varName → Set<string>
+{
+  // Match "const VARNAME = [" — we'll brace-match the array body
+  const arrayDefRe = /\bconst\s+(\w+)\s*=\s*\[/g;
+  let adm;
+  while ((adm = arrayDefRe.exec(src)) !== null) {
+    const varName = adm[1];
+    const arrayStart = adm.index + adm[0].length - 1; // points at '['
+    let depth = 1, i = arrayStart + 1;
+    while (i < src.length && depth > 0) {
+      const c = src[i];
+      if (c === '[') depth++;
+      else if (c === ']') depth--;
+      else if (c === '"' || c === "'") {
+        const s = readStringAt(src, i);
+        if (s) { i = s.end; continue; }
+      }
+      i++;
+    }
+    const arrayBody = src.slice(arrayStart + 1, i - 1);
+
+    // Extract { label: "..." } or { label: '...' }
+    const labels = new Set();
+    const labelRe = /\blabel\s*:\s*["']([^"'\\]*)["']/g;
+    let lm;
+    while ((lm = labelRe.exec(arrayBody)) !== null) {
+      if (lm[1].trim()) labels.add(lm[1]);
+    }
+    if (labels.size > 0) optionArrayLabels.set(varName, labels);
+  }
+}
+
+console.log(`[build-context] Option arrays found: ${optionArrayLabels.size}`);
+
+// ── 6. CreateRow / CreateSectionTitle static scan ────────────────────────────
+//
+// Walk RenderCurrentTabContent tab-by-tab. For each CreateRow call:
+//  - arg 1 (label)   → gets the current tab+section context
+//  - arg 7 (options) → if it's a known option-array variable, all its labels
+//                       also inherit this row's context
 
 function readSecondStringArg(text, openParen) {
-  // openParen points to '('; skip it and walk past the first arg to the comma
   let pos = openParen + 1;
   let depth = 0;
   while (pos < text.length) {
@@ -225,7 +305,6 @@ function readSecondStringArg(text, openParen) {
   return s ? s.value : null;
 }
 
-// Find RenderCurrentTabContent and split into per-tab blocks
 const renderFnMatch = /function RenderCurrentTabContent\([^)]*\)\s*\{/.exec(src);
 if (renderFnMatch) {
   const bodyStart = renderFnMatch.index + renderFnMatch[0].length;
@@ -273,23 +352,54 @@ if (renderFnMatch) {
 
       if (fnName === 'CreateSectionTitle' || fnName === 'CreateSectionTitleCheckboxToggle' || fnName === 'CreateAnimatedInlineToggleSection') {
         currentSection = l;
-        // Also add the section title itself if not already mapped
         if (!contextMap[l]) {
           const parts = [group, dTab].filter(Boolean);
           contextMap[l] = { breadcrumb: parts.join(' › '), tab: dTab, section: '', group };
         }
       } else {
         // Row label
-        if (!contextMap[l]) {
-          const parts = [group, dTab, currentSection].filter(Boolean);
-          contextMap[l] = { breadcrumb: parts.join(' › '), tab: dTab, section: currentSection, group };
+        const parts = [group, dTab, currentSection].filter(Boolean);
+        const entry = { breadcrumb: parts.join(' › '), tab: dTab, section: currentSection, group };
+        if (!contextMap[l]) contextMap[l] = entry;
+
+        // Also assign this row's context to all labels in its options array (arg 7)
+        const optionsArg = readNthArg(block, openParen, 7);
+        if (optionsArg) {
+          const optLabels = optionArrayLabels.get(optionsArg);
+          if (optLabels) {
+            for (const ol of optLabels) {
+              if (!contextMap[ol]) contextMap[ol] = entry;
+            }
+          }
         }
       }
     }
   }
 }
 
-// ── 6. Write output ───────────────────────────────────────────────────────────
+console.log(`[build-context] After CreateRow scan: ${Object.keys(contextMap).length} entries`);
+
+// ── 7. SETTINGS_RU_TEXT catch-all ────────────────────────────────────────────
+//
+// Every key in SETTINGS_RU_TEXT is a translatable string from ql_settings.js.
+// For strings not yet placed in a specific section, assign a generic "Settings"
+// context so they group together rather than land in "# Other".
+
+const ruTextBody = findDictBody(src, 'SETTINGS_RU_TEXT');
+if (ruTextBody) {
+  const ruDict = parseStringDict(src, ruTextBody.start, ruTextBody.end);
+  const genericEntry = { breadcrumb: 'Settings', tab: 'Settings', section: '', group: '' };
+  let fallbackCount = 0;
+  for (const key of Object.keys(ruDict)) {
+    if (key && !contextMap[key]) {
+      contextMap[key] = genericEntry;
+      fallbackCount++;
+    }
+  }
+  console.log(`[build-context] SETTINGS_RU_TEXT fallback: +${fallbackCount} entries`);
+}
+
+// ── 8. Write output ───────────────────────────────────────────────────────────
 
 const total = Object.keys(contextMap).length;
 const outPath = resolve(ROOT, 'src/data/qollock-context.json');
