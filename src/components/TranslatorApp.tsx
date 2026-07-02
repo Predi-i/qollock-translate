@@ -380,12 +380,14 @@ export default function TranslatorApp() {
   const [glossaryError, setGlossaryError] = useState('');
 
   const savedValues = useRef<Map<string, string>>(new Map());
+  // The D1-committed value at last load (or last commitRow). Determines dirty.
+  const originalValues = useRef<Map<string, string>>(new Map());
 
-  // Keys typed in the editor but not yet flushed to D1 via commitRow.
+  // Keys where the local draft differs from the last D1-committed value.
   const pendingKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const [key, value] of Object.entries(drafts)) {
-      if (value !== (savedValues.current.get(key) ?? '')) keys.add(key);
+      if (value !== (originalValues.current.get(key) ?? '')) keys.add(key);
     }
     return keys;
   }, [drafts]);
@@ -569,6 +571,7 @@ export default function TranslatorApp() {
       setLanguages(next.languages);
       setDrafts(Object.fromEntries(next.rows.map((row) => [row.key, row.value])));
       savedValues.current = new Map(next.rows.map((row) => [row.key, row.value]));
+      originalValues.current = new Map(next.rows.map((row) => [row.key, row.value]));
       prefilledRef.current = new Set();
       undoStack.current = [];
       setUndoDepth(0);
@@ -735,6 +738,7 @@ export default function TranslatorApp() {
     const value = suggestion.value;
     setDrafts((d) => ({ ...d, [key]: value }));
     savedValues.current.set(key, value);
+    originalValues.current.set(key, value);
     patchRow(key, value, 'translated', false);
     // The server accepts one suggestion per string and rejects the rest, so drop
     // every pending suggestion for this key from the list.
@@ -820,6 +824,7 @@ export default function TranslatorApp() {
         setUndoDepth(undoStack.current.length);
       }
       savedValues.current.set(key, value);
+      originalValues.current.set(key, value);
       // Trust the server's reported stage — it may have downgraded a non-reviewer's
       // approve to needs-review — and fall back to the prediction if it is absent.
       const savedStatus: RowStatus = value.trim()
@@ -837,24 +842,19 @@ export default function TranslatorApp() {
     }
   }, [patchRow]);
 
-  // Pop the last saved change and restore the previous value, re-saving it so
-  // the server and the UI agree. Bound to Ctrl/Cmd+Z and the Undo button.
+  // Pop the last blur-checkpoint and restore the previous local draft.
+  // Nothing is written to D1 here — undo is purely local until Submit.
   const performUndo = useCallback(() => {
     const entry = undoStack.current.pop();
     setUndoDepth(undoStack.current.length);
     if (!entry) return;
-    const row = catalogRef.current?.rows.find((r) => r.key === entry.key);
-    if (!row) return;
     setDrafts((d) => ({ ...d, [entry.key]: entry.value }));
-    void commitRow(row, entry.value, { review: entry.reviewed, force: true, fromUndo: true }).then((ok) => {
-      if (ok) {
-        focusKey(entry.key);
-        setError('');
-        const short = entry.label.length > 42 ? `${entry.label.slice(0, 42)}…` : entry.label;
-        setMessage(`Reverted "${short}"`);
-      }
-    });
-    // commitRow / focusKey are stable enough for this handler; refs cover the rest.
+    savedValues.current.set(entry.key, entry.value);
+    focusKey(entry.key);
+    setError('');
+    const short = entry.label.length > 42 ? `${entry.label.slice(0, 42)}…` : entry.label;
+    setMessage(`Reverted "${short}"`);
+    // focusKey is stable; refs cover the rest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   performUndoRef.current = performUndo;
@@ -1348,6 +1348,17 @@ export default function TranslatorApp() {
     setDrafts((d) => ({ ...d, [key]: value }));
   }, []);
 
+  // On blur, push a checkpoint to the undo stack if the draft changed since
+  // the last time the user left this row. Nothing is written to D1 here.
+  const handleBlur = useCallback((row: CatalogRow, value: string) => {
+    const prev = savedValues.current.get(row.key) ?? '';
+    if (value === prev) return;
+    undoStack.current.push({ key: row.key, value: prev, reviewed: row.status === 'reviewed', label: row.source });
+    if (undoStack.current.length > 100) undoStack.current.shift();
+    setUndoDepth(undoStack.current.length);
+    savedValues.current.set(row.key, value);
+  }, []);
+
   const handleGlossaryDraftChange = useCallback(
     (sourceTerm: string, patch: Partial<GlossaryDraft>) => {
       setGlossaryDrafts((drafts) => {
@@ -1470,9 +1481,7 @@ export default function TranslatorApp() {
       const el = event.currentTarget;
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
-        void commitRow(row, el.value).then((ok) => {
-          if (ok) moveFocus(row.key, 1);
-        });
+        moveFocus(row.key, 1);
       } else if (event.key === 'ArrowDown' && el.selectionStart === el.value.length && el.selectionStart === el.selectionEnd) {
         event.preventDefault();
         moveFocus(row.key, 1);
@@ -1481,12 +1490,14 @@ export default function TranslatorApp() {
         moveFocus(row.key, -1);
       } else if (event.key === 'Escape') {
         event.preventDefault();
-        const reset = savedValues.current.get(row.key) ?? '';
+        // Escape discards ALL local changes to this row, reverting to D1 state.
+        const reset = originalValues.current.get(row.key) ?? '';
         setDrafts((d) => ({ ...d, [row.key]: reset }));
+        savedValues.current.set(row.key, reset);
         el.blur();
       }
     },
-    [commitRow, moveFocus]
+    [moveFocus]
   );
 
   const completion = catalog?.stats.total
@@ -1618,7 +1629,7 @@ export default function TranslatorApp() {
             <button
               className="btn"
               type="button"
-              title="Undo the last saved change (Ctrl+Z)"
+              title="Undo last edit (Ctrl+Z)"
               disabled={undoDepth === 0}
               onClick={() => performUndo()}
             >
@@ -1946,8 +1957,8 @@ export default function TranslatorApp() {
             </div>
 
             <p className="help-text">
-              <kbd>Enter</kbd> saves · <kbd>Tab</kbd> inserts tags &amp; glossary · <kbd>↑</kbd>/<kbd>↓</kbd> move ·{' '}
-              <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes. Keep anything inside {'{{double braces}}'}.{' '}
+              <kbd>Enter</kbd> moves to next · <kbd>Tab</kbd> inserts tags &amp; glossary · <kbd>↑</kbd>/<kbd>↓</kbd> move ·{' '}
+              <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes · <kbd>Esc</kbd> resets row. Keep anything inside {'{{double braces}}'}.{' '}
               <button type="button" className="link-btn" onClick={() => setShowHelp(true)}>
                 Full guide
               </button>
@@ -2065,7 +2076,7 @@ export default function TranslatorApp() {
                       onFocusRow={focusRow}
                       onChange={handleChange}
                       onKeyDown={onRowKeyDown}
-                      onBlur={commitRow}
+                      onBlur={handleBlur}
                       onToggleCheck={toggleCheck}
                       onInsertPlaceholder={insertPlaceholder}
                       onInsertGlossaryTerm={insertGlossaryTerm}
@@ -2262,8 +2273,8 @@ export default function TranslatorApp() {
                   <span className="guide-step-num">3</span>
                   <div>
                     <strong>Type the translation</strong> in the box under each English phrase. Press <kbd>Enter</kbd>{' '}
-                    to save and jump to the next, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line, and{' '}
-                    <kbd>↑</kbd>/<kbd>↓</kbd> to move between boxes. It saves on its own when you click away too.
+                    to move to the next string, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line, and{' '}
+                    <kbd>↑</kbd>/<kbd>↓</kbd> to move between boxes. Press <kbd>Esc</kbd> to discard changes to the current row.
                   </div>
                 </li>
                 <li>
@@ -2278,8 +2289,9 @@ export default function TranslatorApp() {
                 <li>
                   <span className="guide-step-num">5</span>
                   <div>
-                    <strong>Submit when ready.</strong> Press <strong>Submit translations</strong> to send your work
-                    to the developer. Nothing goes live until they review it.
+                    <strong>Submit when ready.</strong> Press <strong>Submit translations</strong> to save all your
+                    changes and send them to the developer. Nothing goes live until they review it. Your changes stay
+                    local until you press Submit — closing the tab without submitting will discard them.
                   </div>
                 </li>
               </ol>
@@ -2736,7 +2748,7 @@ function StringHelper({
         <button
           type="button"
           className="ed-tool"
-          title="Undo the last saved change (Ctrl+Z)"
+          title="Undo last edit (Ctrl+Z)"
           disabled={!canUndo}
           onMouseDown={(event) => event.preventDefault()}
           onClick={onUndo}
