@@ -55,6 +55,7 @@ interface CatalogRow {
   placeholders: string[];
   missingPlaceholders: string[];
   extraPlaceholders: string[];
+  context: { breadcrumb: string; tab: string; section: string; group: string } | null;
 }
 
 interface CatalogResponse {
@@ -1093,9 +1094,50 @@ export default function TranslatorApp() {
   }, []);
 
   const groups = useMemo<RowGroup[]>(() => {
-    // Bucket by the A–Z section so case-only ordering quirks (lowercase keys sort
-    // after uppercase) don't split one letter into two headers. Letters first, "#"
-    // (digits/symbols) last.
+    // When context data is available, group by "Group › Tab" (e.g. "Gameplay › Crosshair").
+    // Fall back to A–Z alphabetic grouping for strings without context.
+    const hasAnyContext = filteredRows.some((r) => r.context);
+
+    if (hasAnyContext) {
+      // TAB-BASED grouping: define a canonical order matching GetSettingsTabGroups().
+      const TAB_ORDER = [
+        'Support', 'Settings', 'Presets', 'Console', 'Arcade',
+        'Crosshair', 'Healthbar', 'HUD', 'UI', 'Overlay', 'Minimap', 'Audio',
+      ];
+      const byLabel = new Map<string, RowGroup>();
+      for (const row of filteredRows) {
+        let label: string;
+        let hint: string;
+        if (row.context) {
+          label = row.context.group ? `${row.context.group} › ${row.context.tab}` : row.context.tab;
+          hint = `Settings tab: ${row.context.tab}`;
+        } else {
+          label = '# Other';
+          hint = 'Strings without a known settings location';
+        }
+        let group = byLabel.get(label);
+        if (!group) {
+          group = { section: { label, hint }, rows: [] };
+          byLabel.set(label, group);
+        }
+        group.rows.push(row);
+      }
+      return [...byLabel.values()].sort((a, b) => {
+        const aTab = a.section.label.split(' › ')[1] ?? a.section.label;
+        const bTab = b.section.label.split(' › ')[1] ?? b.section.label;
+        const aOther = a.section.label.startsWith('#');
+        const bOther = b.section.label.startsWith('#');
+        if (aOther !== bOther) return aOther ? 1 : -1;
+        const ai = TAB_ORDER.indexOf(aTab);
+        const bi = TAB_ORDER.indexOf(bTab);
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        if (ai !== -1) return -1;
+        if (bi !== -1) return 1;
+        return a.section.label.localeCompare(b.section.label);
+      });
+    }
+
+    // A–Z fallback (original behaviour).
     const byLabel = new Map<string, RowGroup>();
     for (const row of filteredRows) {
       const section = sectionForKey(row.key);
@@ -1454,9 +1496,20 @@ export default function TranslatorApp() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark">{SITE.shortName}</div>
-          <div>
+          <button
+            type="button"
+            className="brand-home"
+            title={`Back to ${SITE.clientName} translations`}
+            aria-label={`Back to ${SITE.clientName} translations`}
+            onClick={() => {
+              setView('translations');
+              setSelectedKey(null);
+            }}
+          >
+            <div className="brand-mark">{SITE.shortName}</div>
             <div className="brand-title">{SITE.appName}</div>
+          </button>
+          <div>
             <div className="brand-subtitle">
               {login || 'Loading account'}
               {login ? (
@@ -2429,9 +2482,16 @@ const TableRow = memo(function TableRow({
     >
       <span className={`tablerow-dot ${meta.cls}`} title={meta.label} aria-hidden="true" />
       <div className="tablerow-src">
-        <SourceWithGlossary source={row.source} matches={glossaryMatches} />
-        {hasSuggestion ? (
-          <Lightbulb className="tablerow-sugg" size={12} aria-label="Has a suggestion" />
+        <div className="tablerow-src-top">
+          <SourceWithGlossary source={row.source} matches={glossaryMatches} />
+          {hasSuggestion ? (
+            <Lightbulb className="tablerow-sugg" size={12} aria-label="Has a suggestion" />
+          ) : null}
+        </div>
+        {row.context ? (
+          <span className="tablerow-ctx" title={row.context.breadcrumb}>
+            {row.context.tab}{row.context.section ? ` › ${row.context.section}` : ''}
+          </span>
         ) : null}
       </div>
       <div className="tablerow-tgt-wrap">
@@ -2720,6 +2780,27 @@ function StringHelper({
           </ul>
         )}
       </div>
+
+      {row.context ? (
+        <div className="helper-section helper-context">
+          <div className="helper-title">Context</div>
+          <div className="helper-breadcrumb" title="Where this string appears in the QOLLOCK settings UI">
+            {[row.context.group, row.context.tab, row.context.section]
+              .filter(Boolean)
+              .map((part, i, arr) => (
+                <span key={i}>
+                  <span className={i === arr.length - 1 ? 'breadcrumb-leaf' : 'breadcrumb-part'}>{part}</span>
+                  {i < arr.length - 1 ? <span className="breadcrumb-sep"> › </span> : null}
+                </span>
+              ))}
+          </div>
+        </div>
+      ) : (
+        <div className="helper-section helper-context helper-context--unknown">
+          <div className="helper-title">Context</div>
+          <p className="helper-hint">Location in the settings UI is not yet mapped for this string.</p>
+        </div>
+      )}
 
       <div className="helper-section">
         <div className="helper-title">Details</div>

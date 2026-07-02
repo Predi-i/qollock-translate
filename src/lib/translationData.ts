@@ -7,6 +7,16 @@ import {
 } from './catalog';
 import { getTranslations } from './db';
 import { fetchCatalog, fetchSourceEntries } from './github';
+import rawContext from '../data/qollock-context.json';
+
+interface ContextEntry {
+  breadcrumb: string;
+  tab: string;
+  section: string;
+  group: string;
+}
+
+const CONTEXT_MAP = rawContext as Record<string, ContextEntry>;
 
 export type CatalogRowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
 
@@ -22,6 +32,7 @@ export interface CatalogRow {
   placeholders: string[];
   missingPlaceholders: string[];
   extraPlaceholders: string[];
+  context: { breadcrumb: string; tab: string; section: string; group: string } | null;
 }
 
 export interface MaterializedLanguage {
@@ -72,6 +83,7 @@ export async function materializeLanguage(
       placeholders: placeholders(source),
       missingPlaceholders: check.missing,
       extraPlaceholders: check.extra,
+      context: CONTEXT_MAP[source.trim()] ?? null,
     });
 
     if (value.trim()) catalogEntries.push({ key, value });

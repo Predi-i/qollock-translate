@@ -12,6 +12,7 @@
     "preview": "astro preview",
     "deploy": "pnpm db:migrate:remote && pnpm build && wrangler deploy",
     "astro": "astro",
+    "build:context": "node scripts/build-context.mjs",
     "typecheck": "astro check",
     "db:migrate:local": "wrangler d1 migrations apply qollock-translate --local",
     "db:migrate:remote": "wrangler d1 migrations apply qollock-translate --remote",

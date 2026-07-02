@@ -106,9 +106,35 @@ textarea:focus-visible {
 
 .brand {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The logo mark + title double as a "home" button back to the translations view. */
+.brand-home {
+  display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.brand-home:hover .brand-title {
+  color: var(--color-accent);
+}
+
+.brand-home:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 9px;
 }
 
 .brand-mark {
@@ -349,6 +375,35 @@ textarea:focus-visible {
 .helper-note {
   color: var(--color-muted);
   font-size: 12px;
+}
+
+/* Context / breadcrumb section in the right-hand helper pane */
+.helper-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.breadcrumb-part {
+  color: var(--color-muted);
+}
+
+.breadcrumb-sep {
+  color: var(--color-muted);
+  opacity: 0.6;
+  margin: 0 2px;
+}
+
+.breadcrumb-leaf {
+  color: var(--color-fg);
+  font-weight: 500;
+}
+
+.helper-context--unknown .helper-hint {
+  margin-bottom: 0;
 }
 
 .helper-gloss-list {
@@ -884,8 +939,29 @@ textarea:focus-visible {
   padding-top: 4px;
   word-break: break-word;
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.tablerow-src-top {
+  display: flex;
   align-items: flex-start;
   gap: 6px;
+  width: 100%;
+}
+
+/* Breadcrumb shown under the source text in each table row */
+.tablerow-ctx {
+  font-size: 10px;
+  color: var(--color-muted);
+  opacity: 0.7;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  cursor: default;
 }
 
 .tablerow-sugg {
@@ -1999,6 +2075,8 @@ kbd {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 /* Glossary word highlighted inside the English source, with a hover tooltip

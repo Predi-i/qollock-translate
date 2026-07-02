@@ -1,0 +1,58 @@
+name: Update Translation Context
+
+# Fetches ql_settings.js from the private civo7/QOLLOCK repo, extracts the
+# breadcrumb context map, and commits the result to src/data/qollock-context.json.
+#
+# Required secrets:
+#   QOLLOCK_GITHUB_TOKEN — PAT with `contents:read` on civo7/QOLLOCK
+#
+# Auto-triggers: daily at 04:17 UTC + any manual run.
+# After this workflow commits, redeploy via the Deploy workflow to ship it.
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout qollock-translate
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download ql_settings.js from QOLLOCK
+        env:
+          QOLLOCK_TOKEN: ${{ secrets.QOLLOCK_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            -H "Authorization: Bearer ${QOLLOCK_TOKEN}" \
+            -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/civo7/QOLLOCK/contents/panorama/scripts/ql_settings.js?ref=main" \
+            -o /tmp/ql_settings.js
+          echo "Downloaded $(wc -l < /tmp/ql_settings.js) lines"
+
+      - name: Extract context
+        run: node scripts/build-context.mjs /tmp/ql_settings.js
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/data/qollock-context.json
+          if git diff --cached --quiet; then
+            echo "No changes to qollock-context.json"
+          else
+            git commit -m "chore: update qollock-context.json from ql_settings.js"
+            git push
+          fi
