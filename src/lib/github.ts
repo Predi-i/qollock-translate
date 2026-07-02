@@ -145,6 +145,18 @@ export async function createTranslationPullRequest(
         sha: baseRef.value.object.sha,
       }),
     });
+  } else if (branchRef.value.object.sha !== baseRef.value.object.sha) {
+    // The branch already exists and is stale (e.g. a previous PR for this
+    // language was merged, or base moved on). Reusing its old tip makes the new
+    // commit diverge from base and produces an unmergeable, conflicting PR.
+    // Force it back onto the current base so the only diff is our own file.
+    await githubFetch(env, `/repos/${owner}/${name}/git/refs/heads/${urlPath(branch)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        sha: baseRef.value.object.sha,
+        force: true,
+      }),
+    });
   }
 
   const encodedPath = urlPath(path);
