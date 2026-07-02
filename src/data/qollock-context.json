@@ -1025,30 +1025,6 @@
     "section": "Top Bar",
     "group": "Gameplay"
   },
-  "Souls Per Minute": {
-    "breadcrumb": "Gameplay › HUD › Top Bar",
-    "tab": "HUD",
-    "section": "Top Bar",
-    "group": "Gameplay"
-  },
-  "Shows the individual player souls per minute on scoreboard and the team in the top bar.": {
-    "breadcrumb": "Gameplay › HUD › Top Bar",
-    "tab": "HUD",
-    "section": "Top Bar",
-    "group": "Gameplay"
-  },
-  "Unspent Souls": {
-    "breadcrumb": "Gameplay › HUD › Top Bar",
-    "tab": "HUD",
-    "section": "Top Bar",
-    "group": "Gameplay"
-  },
-  "Shows the individual player's unspent souls in the top bar.": {
-    "breadcrumb": "Gameplay › HUD › Top Bar",
-    "tab": "HUD",
-    "section": "Top Bar",
-    "group": "Gameplay"
-  },
   "Urn Difference": {
     "breadcrumb": "Gameplay › HUD › Top Bar",
     "tab": "HUD",
@@ -1643,7 +1619,7 @@
     "section": "",
     "group": "Gameplay"
   },
-  "Urn Timer": {
+  "Rift Timer": {
     "breadcrumb": "Gameplay › HUD › Top Bar",
     "tab": "HUD",
     "section": "Top Bar",
@@ -4157,6 +4133,18 @@
     "section": "",
     "group": ""
   },
+  "Shows the individual player souls per minute on scoreboard and the team in the top bar.": {
+    "breadcrumb": "Settings",
+    "tab": "Settings",
+    "section": "",
+    "group": ""
+  },
+  "Shows the individual player's unspent souls in the top bar.": {
+    "breadcrumb": "Settings",
+    "tab": "Settings",
+    "section": "",
+    "group": ""
+  },
   "Simplified Minimap": {
     "breadcrumb": "Settings",
     "tab": "Settings",
@@ -4188,6 +4176,12 @@
     "group": ""
   },
   "Snowball or Poster": {
+    "breadcrumb": "Settings",
+    "tab": "Settings",
+    "section": "",
+    "group": ""
+  },
+  "Souls Per Minute": {
     "breadcrumb": "Settings",
     "tab": "Settings",
     "section": "",
@@ -4470,6 +4464,12 @@
     "group": ""
   },
   "Unsecured Souls Timer": {
+    "breadcrumb": "Settings",
+    "tab": "Settings",
+    "section": "",
+    "group": ""
+  },
+  "Unspent Souls": {
     "breadcrumb": "Settings",
     "tab": "Settings",
     "section": "",
@@ -4758,6 +4758,12 @@
     "group": ""
   },
   "Shows a countdown timer in the top bar for the next urn spawn or relocation.": {
+    "breadcrumb": "Settings",
+    "tab": "Settings",
+    "section": "",
+    "group": ""
+  },
+  "Urn Timer": {
     "breadcrumb": "Settings",
     "tab": "Settings",
     "section": "",
