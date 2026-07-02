@@ -380,6 +380,16 @@ export default function TranslatorApp() {
   const [glossaryError, setGlossaryError] = useState('');
 
   const savedValues = useRef<Map<string, string>>(new Map());
+
+  // Keys typed in the editor but not yet flushed to D1 via commitRow.
+  const pendingKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const [key, value] of Object.entries(drafts)) {
+      if (value !== (savedValues.current.get(key) ?? '')) keys.add(key);
+    }
+    return keys;
+  }, [drafts]);
+  const hasPending = pendingKeys.size > 0;
   // Undo history of saved values. We keep refs in sync so the global key
   // handler (bound once) always sees the latest catalog and save function.
   const undoStack = useRef<UndoEntry[]>([]);
@@ -501,6 +511,14 @@ export default function TranslatorApp() {
   // Drop any armed submit when the unmount happens or the language changes, so a
   // pending countdown never fires against the wrong (or a gone) language.
   useEffect(() => () => clearSubmitTimers(), []);
+
+  // Warn the browser before navigating away if there are uncommitted edits.
+  useEffect(() => {
+    if (!hasPending) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasPending]);
 
   useEffect(() => {
     clearSubmitTimers();
@@ -847,6 +865,13 @@ export default function TranslatorApp() {
     submitTimers.current = {};
   }
 
+  // Commit any in-memory edits that haven't been flushed to D1 yet.
+  async function flushDirtyRows() {
+    if (!catalog || pendingKeys.size === 0) return;
+    const rowsToFlush = catalog.rows.filter((r) => pendingKeys.has(r.key));
+    await Promise.all(rowsToFlush.map((r) => commitRow(r, drafts[r.key] ?? '')));
+  }
+
   // Step 1: arm the submit. Nothing is sent yet — the translator gets a few
   // seconds to back out before the PR is opened.
   function startSubmit() {
@@ -879,6 +904,7 @@ export default function TranslatorApp() {
       return;
     }
     setSubmitPhase('submitting');
+    await flushDirtyRows();
     setError('');
     setMessage('');
     try {
@@ -1785,6 +1811,26 @@ export default function TranslatorApp() {
                     <div className="history-meta">
                       <span className="history-by">{entry.changedBy || 'unknown'}</span>
                       <span className="history-when">{formatDate(entry.createdAt)}</span>
+                      {isReviewer && entry.oldValue !== entry.newValue ? (
+                        <button
+                          className="btn btn-ghost history-revert"
+                          type="button"
+                          title={`Revert to: ${entry.oldValue ?? '(empty)'}`}
+                          disabled={!!busy}
+                          onClick={() => {
+                            if (!selectedLanguage) return;
+                            void fetchJson('/api/history/revert', {
+                              method: 'POST',
+                              body: JSON.stringify({ id: entry.id, languageCode: selectedLanguage }),
+                            }).then(() => {
+                              void loadCatalog(selectedLanguage);
+                              void loadHistory(selectedLanguage);
+                            }).catch((err: unknown) => setError((err as Error).message));
+                          }}
+                        >
+                          Revert
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 ))
@@ -1836,7 +1882,7 @@ export default function TranslatorApp() {
                     className="btn btn-primary"
                     type="button"
                     title="Send your translations to the developer for review"
-                    disabled={!!busy || submitPhase === 'submitting' || !selectedLanguage || !catalog?.stats.completed}
+                    disabled={!!busy || submitPhase === 'submitting' || !selectedLanguage}
                     onClick={startSubmit}
                   >
                     <GitPullRequest size={16} />
@@ -2007,6 +2053,7 @@ export default function TranslatorApp() {
                       key={row.key}
                       row={row}
                       value={drafts[row.key] ?? ''}
+                      dirty={pendingKeys.has(row.key)}
                       saving={!!savingKeys[row.key]}
                       saved={!!savedKeys[row.key]}
                       error={rowErrors[row.key]}
@@ -2357,6 +2404,7 @@ function SuggestionCard({
 }
 
 interface TableRowProps {
+  dirty: boolean;
   row: CatalogRow;
   value: string;
   saving: boolean;
@@ -2384,6 +2432,7 @@ interface TableRowProps {
 const TableRow = memo(function TableRow({
   row,
   value,
+  dirty,
   saving,
   saved,
   error,
@@ -2477,7 +2526,7 @@ const TableRow = memo(function TableRow({
 
   return (
     <div
-      className={`tablerow ${active ? 'active' : ''} ${flagged ? 'flagged' : ''}`}
+      className={`tablerow ${active ? 'active' : ''} ${flagged ? 'flagged' : ''} ${dirty ? 'dirty' : ''}`}
       data-key={row.key}
     >
       <span className={`tablerow-dot ${meta.cls}`} title={meta.label} aria-hidden="true" />

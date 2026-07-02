@@ -970,6 +970,12 @@ textarea:focus-visible {
   color: var(--color-accent-2);
 }
 
+/* Unsaved (typed but not yet committed to D1) */
+.tablerow.dirty {
+  border-left: 3px solid var(--color-accent);
+  padding-left: 7px;
+}
+
 .tablerow-tgt-wrap {
   position: relative;
   min-width: 0;
@@ -1973,6 +1979,16 @@ textarea:focus-visible {
 
 .history-by {
   color: var(--color-fg);
+}
+
+.history-revert {
+  font-size: 11px;
+  padding: 2px 6px;
+  margin-top: 2px;
+  opacity: 0.7;
+}
+.history-revert:hover {
+  opacity: 1;
 }
 
 .help-text kbd,

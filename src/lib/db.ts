@@ -548,6 +548,21 @@ export async function listTranslationHistory(
   return result.results ?? [];
 }
 
+export async function getHistoryEntry(
+  db: D1Database,
+  id: number,
+  languageCode: string
+): Promise<TranslationHistoryRow | null> {
+  const result = await db
+    .prepare<TranslationHistoryRow>(
+      `SELECT id, language_code, translation_key, action, old_value, new_value, status, changed_by, created_at
+       FROM translation_history WHERE id = ? AND language_code = ?`
+    )
+    .bind(id, languageCode)
+    .first();
+  return result ?? null;
+}
+
 export async function upsertContributor(
   db: D1Database,
   params: { id: string; displayName: string; avatarUrl: string | null }
