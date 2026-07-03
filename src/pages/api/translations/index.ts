@@ -15,7 +15,6 @@ interface SaveTranslationBody {
   languageCode?: string;
   key?: string;
   value?: string;
-  status?: 'translated' | 'reviewed';
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -29,12 +28,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const languageCode = (body.languageCode ?? '').trim();
   const key = (body.key ?? '').trim();
   const value = body.value ?? '';
-  // Role decides the stage. A reviewer's save lands approved (they may explicitly
-  // send it back with status:'translated'); everyone else's edit goes to "needs
-  // review", so we ignore a non-reviewer asking for 'reviewed'. needs_review is
-  // kept only for import-undo's untouched-row guard, not for display.
-  const status = locals.isReviewer && body.status !== 'translated' ? 'reviewed' : 'translated';
-  const needsReview = status === 'translated';
+  // There is no in-app review stage: any saved string is simply 'translated'.
+  // The real review happens when the maintainer looks at the submitted PR.
+  // needs_review is kept false; it only ever mattered for import-undo's
+  // untouched-row guard, not for display.
+  const status = 'translated';
+  const needsReview = false;
 
   if (!isLanguageCode(languageCode)) return badRequest('invalid language code');
   if (!key) return badRequest('missing translation key');
@@ -83,12 +82,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
     translatorEmail: locals.translatorLogin,
   });
 
-  // A reviewer's save that lands 'reviewed' is an approval; anything else is a
-  // plain edit (covers both first-time translations and later tweaks).
   await logHistory({
     languageCode,
     key,
-    action: status === 'reviewed' ? 'approve' : 'edit',
+    action: 'edit',
     oldValue: prior?.value ?? null,
     newValue: value,
     status,

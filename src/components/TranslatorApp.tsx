@@ -27,11 +27,12 @@ import { isLockedGlossaryTerm, lockedGlossaryNote, SHORT_GLOSSARY_TERMS } from '
 import { COMMON_LANGUAGES, flagForCode, sectionForKey, type SectionMeta } from '../lib/languages';
 import { SITE } from '../site.config';
 
+// 'reviewed' is a legacy value some older rows still carry in D1; the UI treats
+// it identically to 'translated' (there is no in-app approval stage anymore —
+// the real review happens when the maintainer looks at the submitted PR).
 type RowStatus = 'missing' | 'shipped' | 'draft' | 'translated' | 'reviewed';
-// Workflow stages are mutually exclusive (one per row): All shows everything,
-// then Untranslated -> Needs review -> Approved. 'flagged' (Issues) and
-// 'suggested' are cross-cutting filters surfaced as chips, not stages.
-type Filter = 'all' | 'untranslated' | 'review' | 'approved' | 'flagged' | 'suggested';
+// 'flagged' (Issues) and 'suggested' are cross-cutting filters surfaced as chips.
+type Filter = 'all' | 'untranslated' | 'flagged' | 'suggested';
 type View = 'translations' | 'contributors' | 'history';
 type ContributorRole = 'translator' | 'reviewer' | 'admin';
 type GlossaryFilter = 'missing' | 'saved' | 'all';
@@ -48,9 +49,7 @@ interface CatalogRow {
   source: string;
   value: string;
   status: RowStatus;
-  needsReview: boolean;
   translatorEmail: string | null;
-  reviewerEmail: string | null;
   updatedAt: string | null;
   placeholders: string[];
   missingPlaceholders: string[];
@@ -148,7 +147,6 @@ interface RowGroup {
 interface UndoEntry {
   key: string;
   value: string;
-  reviewed: boolean;
   label: string;
 }
 
@@ -283,23 +281,13 @@ const GLOSSARY_STOPWORDS = new Set([
   'your',
 ]);
 
-// Plain-language labels. The stage is derived from status alone: any translated
-// (non-empty, not-yet-approved) string is "Needs review". `flagged` (a broken
-// {{placeholder}}) is a cross-cutting quality flag, drawn red on top of the
-// stage rather than being a stage of its own.
+// Plain-language labels. There is no in-app review stage: a string is either
+// untranslated or translated. `flagged` (a broken {{placeholder}}) is a
+// cross-cutting quality flag, drawn red on top of that rather than a stage.
 function statusMeta(status: RowStatus, flagged: boolean): { label: string; cls: string } {
   if (flagged) return { label: 'Issue', cls: 'flagged' };
-  switch (status) {
-    case 'missing':
-      return { label: 'Untranslated', cls: 'missing' };
-    case 'shipped':
-      return { label: 'Live', cls: 'shipped' };
-    case 'reviewed':
-      return { label: 'Approved', cls: 'reviewed' };
-    default:
-      // draft / translated with a value -> awaiting a reviewer.
-      return { label: 'Needs review', cls: 'review' };
-  }
+  if (status === 'missing') return { label: 'Untranslated', cls: 'missing' };
+  return { label: 'Translated', cls: 'translated' };
 }
 
 function computeStats(rows: CatalogRow[]): CatalogResponse['stats'] {
@@ -317,10 +305,9 @@ export default function TranslatorApp() {
   // nickname used for attribution throughout (glossary notes, "Last edited by").
   const [login, setLogin] = useState('');
   // Whether the signed-in user may approve. Reviewers' edits land approved and
-  // they get an Approve button; everyone else's edits go to "needs review".
+  // reviewer/admin permissions: managing contributor roles, reverting history,
+  // and moderating in-app suggestions. There is no per-string approval stage.
   const [isReviewer, setIsReviewer] = useState(false);
-  const isReviewerRef = useRef(false);
-  isReviewerRef.current = isReviewer;
   const [languages, setLanguages] = useState<Language[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState('');
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
@@ -703,7 +690,7 @@ export default function TranslatorApp() {
     }
   }
 
-  const patchRow = useCallback((key: string, value: string, status: RowStatus, needsReview: boolean) => {
+  const patchRow = useCallback((key: string, value: string, status: RowStatus) => {
     setCatalog((prev) => {
       if (!prev) return prev;
       const rows = prev.rows.map((row) => {
@@ -713,7 +700,6 @@ export default function TranslatorApp() {
           ...row,
           value,
           status,
-          needsReview,
           missingPlaceholders: value.trim() ? check.missing : [],
           extraPlaceholders: value.trim() ? check.extra : [],
         };
@@ -739,7 +725,7 @@ export default function TranslatorApp() {
     setDrafts((d) => ({ ...d, [key]: value }));
     savedValues.current.set(key, value);
     originalValues.current.set(key, value);
-    patchRow(key, value, 'translated', false);
+    patchRow(key, value, 'translated');
     // The server accepts one suggestion per string and rejects the rest, so drop
     // every pending suggestion for this key from the list.
     setSuggestions((prev) => prev.filter((s) => s.key !== key));
@@ -761,38 +747,28 @@ export default function TranslatorApp() {
     return null;
   }, []);
 
-  // Save a single row. Returns true if it saved (or was a no-op), false if blocked.
+  // Save a single row. Returns ok:true if it saved (or was a no-op), ok:false
+  // with the reason if blocked (e.g. a placeholder mismatch) — callers that
+  // batch many rows (flushDirtyRows) need the reason to tell the translator
+  // which strings did NOT make it into the submission, instead of silently
+  // dropping them.
   const commitRow = useCallback(async (
     row: CatalogRow,
     rawValue: string,
-    opts: { review?: boolean; force?: boolean; fromUndo?: boolean } = {}
-  ): Promise<boolean> => {
+    opts: { force?: boolean; fromUndo?: boolean } = {}
+  ): Promise<{ ok: boolean; error?: string }> => {
     const key = row.key;
     const value = rawValue;
-    const wasReviewed = row.status === 'reviewed';
-    const valueChanged = value !== (savedValues.current.get(key) ?? '');
-    // The server has the final say on the stage (it enforces the reviewer role),
-    // but we predict it for the optimistic patch and the no-op short-circuit. A
-    // reviewer's *edit* approves; merely blurring or clicking away an unchanged
-    // row must NOT approve it (that is what the explicit Approve button is for),
-    // so without a real change we keep whatever stage the row already had.
-    // opts.review (the Approve toggle) always wins.
-    const review = value.trim()
-      ? opts.review ?? (isReviewerRef.current && valueChanged ? true : wasReviewed)
-      : false;
-    const statusChanged = review !== wasReviewed;
     const prior = savedValues.current.get(key) ?? '';
 
-    if (!opts.force && value === savedValues.current.get(key) && !statusChanged) return true;
+    if (!opts.force && value === savedValues.current.get(key)) return { ok: true };
 
     if (value.trim()) {
       const check = checkPlaceholders(row.source, value);
       if (check.missing.length || check.extra.length) {
-        setRowErrors((e) => ({
-          ...e,
-          [key]: `Keep the {{tags}}: missing ${check.missing.join(', ') || 'none'}, extra ${check.extra.join(', ') || 'none'}`,
-        }));
-        return false;
+        const message = `Keep the {{tags}}: missing ${check.missing.join(', ') || 'none'}, extra ${check.extra.join(', ') || 'none'}`;
+        setRowErrors((e) => ({ ...e, [key]: message }));
+        return { ok: false, error: message };
       }
     }
 
@@ -804,7 +780,7 @@ export default function TranslatorApp() {
     });
     setSavingKeys((s) => ({ ...s, [key]: true }));
     try {
-      const res = await fetchJson<{ translation?: { status: RowStatus; needs_review: number } }>(
+      const res = await fetchJson<{ translation?: { status: RowStatus } }>(
         '/api/translations',
         {
           method: 'POST',
@@ -812,31 +788,27 @@ export default function TranslatorApp() {
             languageCode: selectedLanguageRef.current,
             key,
             value,
-            status: review ? 'reviewed' : 'translated',
           }),
         }
       );
       // Record the pre-save value so this change can be undone, unless this save
       // *is* an undo (otherwise Ctrl+Z would just bounce between two values).
       if (!opts.fromUndo && prior !== value) {
-        undoStack.current.push({ key, value: prior, reviewed: wasReviewed, label: row.source });
+        undoStack.current.push({ key, value: prior, label: row.source });
         if (undoStack.current.length > 100) undoStack.current.shift();
         setUndoDepth(undoStack.current.length);
       }
       savedValues.current.set(key, value);
       originalValues.current.set(key, value);
-      // Trust the server's reported stage — it may have downgraded a non-reviewer's
-      // approve to needs-review — and fall back to the prediction if it is absent.
-      const savedStatus: RowStatus = value.trim()
-        ? res.translation?.status ?? (review ? 'reviewed' : 'translated')
-        : 'missing';
-      patchRow(key, value, savedStatus, !!res.translation?.needs_review);
+      const savedStatus: RowStatus = value.trim() ? res.translation?.status ?? 'translated' : 'missing';
+      patchRow(key, value, savedStatus);
       setSavedKeys((s) => ({ ...s, [key]: true }));
       window.setTimeout(() => setSavedKeys((s) => ({ ...s, [key]: false })), 1400);
-      return true;
+      return { ok: true };
     } catch (err) {
-      setRowErrors((e) => ({ ...e, [key]: (err as Error).message }));
-      return false;
+      const message = (err as Error).message;
+      setRowErrors((e) => ({ ...e, [key]: message }));
+      return { ok: false, error: message };
     } finally {
       setSavingKeys((s) => ({ ...s, [key]: false }));
     }
@@ -865,11 +837,20 @@ export default function TranslatorApp() {
     submitTimers.current = {};
   }
 
-  // Commit any in-memory edits that haven't been flushed to D1 yet.
-  async function flushDirtyRows() {
-    if (!catalog || pendingKeys.size === 0) return;
+  // Commit any in-memory edits that haven't been flushed to D1 yet. Returns the
+  // rows that failed to save (e.g. a placeholder mismatch) so the caller can
+  // refuse to open a PR that would silently be missing them — this used to be
+  // discarded here, which is exactly how a translator's long strings vanished
+  // from a submission while short glossary-only ones went through untouched.
+  async function flushDirtyRows(): Promise<Array<{ label: string; error: string }>> {
+    if (!catalog || pendingKeys.size === 0) return [];
     const rowsToFlush = catalog.rows.filter((r) => pendingKeys.has(r.key));
-    await Promise.all(rowsToFlush.map((r) => commitRow(r, drafts[r.key] ?? '')));
+    const results = await Promise.all(
+      rowsToFlush.map(async (r) => ({ row: r, result: await commitRow(r, drafts[r.key] ?? '') }))
+    );
+    return results
+      .filter((r) => !r.result.ok)
+      .map((r) => ({ label: r.row.source, error: r.result.error ?? 'could not be saved' }));
   }
 
   // Step 1: arm the submit. Nothing is sent yet — the translator gets a few
@@ -904,9 +885,22 @@ export default function TranslatorApp() {
       return;
     }
     setSubmitPhase('submitting');
-    await flushDirtyRows();
+    const failures = await flushDirtyRows();
     setError('');
     setMessage('');
+    if (failures.length > 0) {
+      setSubmitPhase('idle');
+      const sample = failures
+        .slice(0, 3)
+        .map((f) => `"${f.label.length > 42 ? `${f.label.slice(0, 42)}…` : f.label}" (${f.error})`)
+        .join('; ');
+      setError(
+        `${failures.length} string${failures.length === 1 ? '' : 's'} could NOT be saved and were left out ` +
+          `of this submission: ${sample}${failures.length > 3 ? ', …' : ''}. Fix ${failures.length === 1 ? 'it' : 'them'} ` +
+          `(see the red markers) and press Submit again — nothing else was lost.`
+      );
+      return;
+    }
     try {
       const result = await fetchJson<PullResponse>('/api/pull-request', {
         method: 'POST',
@@ -1068,10 +1062,7 @@ export default function TranslatorApp() {
         filter === 'all' ||
         (filter === 'untranslated' && !done) ||
         (filter === 'flagged' && flagged) ||
-        (filter === 'approved' && row.status === 'reviewed') ||
-        (filter === 'suggested' && suggestionsByKey.has(row.key)) ||
-        // Needs review = has a value but not approved yet (live strings sit apart).
-        (filter === 'review' && done && row.status !== 'reviewed' && row.status !== 'shipped');
+        (filter === 'suggested' && suggestionsByKey.has(row.key));
       const matchesQuery =
         !needle ||
         row.key.toLowerCase().includes(needle) ||
@@ -1353,7 +1344,7 @@ export default function TranslatorApp() {
   const handleBlur = useCallback((row: CatalogRow, value: string) => {
     const prev = savedValues.current.get(row.key) ?? '';
     if (value === prev) return;
-    undoStack.current.push({ key: row.key, value: prev, reviewed: row.status === 'reviewed', label: row.source });
+    undoStack.current.push({ key: row.key, value: prev, label: row.source });
     if (undoStack.current.length > 100) undoStack.current.shift();
     setUndoDepth(undoStack.current.length);
     savedValues.current.set(row.key, value);
@@ -1467,14 +1458,6 @@ export default function TranslatorApp() {
     []
   );
 
-  // Reviewer-only: approve a translation, or send an approved one back for review.
-  const toggleCheck = useCallback(
-    (row: CatalogRow, value: string, reviewed: boolean) => {
-      void commitRow(row, value, { review: !reviewed, force: true });
-    },
-    [commitRow]
-  );
-
   const onRowKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => {
       if (event.nativeEvent.isComposing) return; // let IME (Bengali, CJK, etc.) handle Enter
@@ -1504,11 +1487,6 @@ export default function TranslatorApp() {
     ? Math.round((catalog.stats.completed / catalog.stats.total) * 100)
     : 0;
   const untranslatedCount = catalog?.rows.filter((row) => !row.value.trim()).length ?? 0;
-  const reviewCount =
-    catalog?.rows.filter(
-      (row) => row.value.trim() && row.status !== 'reviewed' && row.status !== 'shipped'
-    ).length ?? 0;
-  const approvedCount = catalog?.rows.filter((row) => row.status === 'reviewed').length ?? 0;
   const issueCount =
     catalog?.rows.filter(
       (row) => row.missingPlaceholders.length > 0 || row.extraPlaceholders.length > 0
@@ -1681,7 +1659,7 @@ export default function TranslatorApp() {
                 <div>
                   <div className="section-title">Contributors</div>
                   <div className="admin-subtitle">
-                    Everyone who signs in with GitHub to translate {SITE.clientName} appears here.
+                    Everyone who has submitted at least one translation for {SITE.clientName} appears here.
                   </div>
                 </div>
                 <button className="btn" type="button" disabled={!!busy} onClick={() => void loadContributors()}>
@@ -2010,8 +1988,6 @@ export default function TranslatorApp() {
             {([
               ['all', 'All'],
               ['untranslated', `Untranslated ${untranslatedCount}`],
-              ['review', `Needs review ${reviewCount}`],
-              ['approved', `Approved ${approvedCount}`],
             ] as Array<[Filter, string]>).map(([value, label]) => (
               <button
                 key={value}
@@ -2070,14 +2046,12 @@ export default function TranslatorApp() {
                       error={rowErrors[row.key]}
                       active={row.key === selectedKey}
                       hasSuggestion={suggestionsByKey.has(row.key)}
-                      canReview={isReviewer}
                       activeLanguageName={activeLanguageName}
                       glossaryMatches={glossaryMatchesByKey.get(row.key) ?? EMPTY_GLOSSARY_MATCHES}
                       onFocusRow={focusRow}
                       onChange={handleChange}
                       onKeyDown={onRowKeyDown}
                       onBlur={handleBlur}
-                      onToggleCheck={toggleCheck}
                       onInsertPlaceholder={insertPlaceholder}
                       onInsertGlossaryTerm={insertGlossaryTerm}
                     />
@@ -2126,7 +2100,6 @@ export default function TranslatorApp() {
               value={selectedRow ? drafts[selectedRow.key] ?? '' : ''}
               saving={selectedRow ? !!savingKeys[selectedRow.key] : false}
               saved={selectedRow ? !!savedKeys[selectedRow.key] : false}
-              canReview={isReviewer}
               canUndo={undoDepth > 0}
               activeLanguageName={activeLanguageName}
               matches={selectedRow ? glossaryMatchesByKey.get(selectedRow.key) ?? EMPTY_GLOSSARY_MATCHES : EMPTY_GLOSSARY_MATCHES}
@@ -2136,7 +2109,6 @@ export default function TranslatorApp() {
               onInsertGlossaryTerm={insertGlossaryTerm}
               onAcceptSuggestion={acceptSuggestion}
               onRejectSuggestion={rejectSuggestion}
-              onToggleCheck={toggleCheck}
               onUndo={performUndo}
             />
           )}
@@ -2306,9 +2278,8 @@ export default function TranslatorApp() {
                 <div className="guide-tip">
                   <Check size={15} />
                   <span>
-                    Every translation you save lands under <strong>Needs review</strong> so a reviewer can check it.
-                    Reviewers see an <strong>Approve</strong> button, and their own edits are approved automatically.
-                    The tabs up top let you focus on what is <strong>Untranslated</strong> or still needs review.
+                    The tab up top lets you focus on what is still <strong>Untranslated</strong>. Everything you save
+                    gets submitted together — the maintainer reviews the actual pull request, not individual strings.
                   </span>
                 </div>
                 <div className="guide-tip">
@@ -2424,14 +2395,12 @@ interface TableRowProps {
   error?: string;
   active: boolean;
   hasSuggestion: boolean;
-  canReview: boolean;
   activeLanguageName: string;
   glossaryMatches: GlossaryTerm[];
   onFocusRow: (key: string) => void;
   onChange: (key: string, value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>, row: CatalogRow) => void;
   onBlur: (row: CatalogRow, value: string) => void;
-  onToggleCheck: (row: CatalogRow, value: string, reviewed: boolean) => void;
   onInsertPlaceholder: (key: string, name: string) => void;
   onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
 }
@@ -2450,20 +2419,17 @@ const TableRow = memo(function TableRow({
   error,
   active,
   hasSuggestion,
-  canReview,
   activeLanguageName,
   glossaryMatches,
   onFocusRow,
   onChange,
   onKeyDown,
   onBlur,
-  onToggleCheck,
   onInsertPlaceholder,
   onInsertGlossaryTerm,
 }: TableRowProps) {
   const live = checkPlaceholders(row.source, value);
   const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
-  const reviewed = row.status === 'reviewed';
   const meta = statusMeta(row.status, flagged);
 
   // Keyboard-driven insert menu. Tab opens it; arrows move; typing filters;
@@ -2625,23 +2591,6 @@ const TableRow = memo(function TableRow({
         ) : saved ? (
           <span className="tablerow-status saved" title="Saved"><Check size={12} /></span>
         ) : null}
-        {canReview ? (
-          <button
-            type="button"
-            className={`tablerow-approve ${reviewed ? 'on' : ''}`}
-            title={reviewed ? 'Approved. Click to send back for review.' : 'Approve this translation'}
-            disabled={!value.trim() || saving}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onToggleCheck(row, value, reviewed)}
-            aria-pressed={reviewed}
-          >
-            <Check size={14} />
-          </button>
-        ) : reviewed ? (
-          <span className="tablerow-approve readonly" title="Approved">
-            <Check size={14} />
-          </span>
-        ) : null}
       </div>
     </div>
   );
@@ -2652,7 +2601,6 @@ interface StringHelperProps {
   value: string;
   saving: boolean;
   saved: boolean;
-  canReview: boolean;
   canUndo: boolean;
   activeLanguageName: string;
   matches: GlossaryTerm[];
@@ -2662,7 +2610,6 @@ interface StringHelperProps {
   onInsertGlossaryTerm: (key: string, targetTerm: string) => void;
   onAcceptSuggestion: (suggestion: Suggestion) => Promise<string | null>;
   onRejectSuggestion: (suggestion: Suggestion) => Promise<string | null>;
-  onToggleCheck: (row: CatalogRow, value: string, reviewed: boolean) => void;
   onUndo: () => void;
 }
 
@@ -2675,7 +2622,6 @@ function StringHelper({
   value,
   saving,
   saved,
-  canReview,
   canUndo,
   activeLanguageName,
   matches,
@@ -2685,7 +2631,6 @@ function StringHelper({
   onInsertGlossaryTerm,
   onAcceptSuggestion,
   onRejectSuggestion,
-  onToggleCheck,
   onUndo,
 }: StringHelperProps) {
   if (!row) {
@@ -2700,7 +2645,6 @@ function StringHelper({
   const live = checkPlaceholders(row.source, value);
   const flagged = value.trim() ? live.missing.length > 0 || live.extra.length > 0 : false;
   const meta = statusMeta(row.status, flagged);
-  const reviewed = row.status === 'reviewed';
 
   // The toolbar mutates the row's textarea via the parent's onChange — refocus
   // the box so the translator can keep typing without reaching for the mouse.
@@ -2755,19 +2699,6 @@ function StringHelper({
         >
           <Undo2 size={15} />
         </button>
-        {canReview ? (
-          <button
-            type="button"
-            className={`chk ${reviewed ? 'on' : ''}`}
-            title={reviewed ? 'Approved. Click to send back for review.' : 'Approve this translation'}
-            disabled={!value.trim() || saving}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onToggleCheck(row, value, reviewed)}
-          >
-            <Check size={14} />
-            {reviewed ? 'Approved' : 'Approve'}
-          </button>
-        ) : null}
       </div>
 
       {suggestions.length > 0 ? (

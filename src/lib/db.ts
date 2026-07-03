@@ -741,21 +741,27 @@ export async function countPendingSuggestions(db: D1Database, languageCode: stri
 export async function listContributors(db: D1Database): Promise<ContributorDashboardRow[]> {
   // Scalar subqueries (not joins) for the counts so the two tallies stay
   // independent — a join to translations would multiply rows and inflate them.
+  // Only people who actually translated something show up here — everyone who
+  // has ever merely signed in used to appear too, which buried real
+  // contributors in a long list of zero-translation accounts.
   const result = await db
     .prepare<ContributorDashboardRow>(
-      `SELECT
-         c.id,
-         c.display_name,
-         c.avatar_url,
-         c.role,
-         c.trust_level,
-         c.banned_at,
-         c.created_at,
-         c.last_seen_at,
-         (SELECT COUNT(*) FROM translations t WHERE t.translator_email = c.id) AS translated_count,
-         (SELECT COUNT(*) FROM translations t WHERE t.reviewer_email = c.id) AS reviewed_count
-       FROM contributors c
-       ORDER BY c.last_seen_at DESC`
+      `SELECT * FROM (
+         SELECT
+           c.id,
+           c.display_name,
+           c.avatar_url,
+           c.role,
+           c.trust_level,
+           c.banned_at,
+           c.created_at,
+           c.last_seen_at,
+           (SELECT COUNT(*) FROM translations t WHERE t.translator_email = c.id) AS translated_count,
+           (SELECT COUNT(*) FROM translations t WHERE t.reviewer_email = c.id) AS reviewed_count
+         FROM contributors c
+       )
+       WHERE translated_count > 0
+       ORDER BY last_seen_at DESC`
     )
     .all();
   return result.results ?? [];
