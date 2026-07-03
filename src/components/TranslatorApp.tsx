@@ -884,6 +884,19 @@ export default function TranslatorApp() {
       setSubmitPhase('idle');
       return;
     }
+    // Nothing locally dirty right now. This used to fall straight through to
+    // opening a PR anyway — harmless if genuinely nothing changed, but if the
+    // translator just typed something that never actually landed in state
+    // (the bug we're guarding against), it silently opened an EMPTY PR with no
+    // signal that their edit never made it in. Refuse instead and say so.
+    if (pendingKeys.size === 0) {
+      setSubmitPhase('idle');
+      setError(
+        "Nothing to submit — no unsaved edits were found. If you just typed a translation and it's not " +
+          'showing a blue "unsaved" marker on the row, click into the box, retype the change, then try Submit again.'
+      );
+      return;
+    }
     setSubmitPhase('submitting');
     const failures = await flushDirtyRows();
     setError('');
