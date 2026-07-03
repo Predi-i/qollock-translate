@@ -759,9 +759,15 @@ export default function TranslatorApp() {
   ): Promise<{ ok: boolean; error?: string }> => {
     const key = row.key;
     const value = rawValue;
-    const prior = savedValues.current.get(key) ?? '';
+    // Compare against the last value D1 actually has (originalValues), NOT
+    // savedValues — that ref is also mutated on every blur as an undo
+    // checkpoint, independent of any server round trip. Comparing against it
+    // here made a just-typed, just-blurred edit look like a no-op the moment
+    // Submit's click blurred the box, so it silently never reached the server
+    // and Submit opened an empty PR.
+    const prior = originalValues.current.get(key) ?? '';
 
-    if (!opts.force && value === savedValues.current.get(key)) return { ok: true };
+    if (!opts.force && value === prior) return { ok: true };
 
     if (value.trim()) {
       const check = checkPlaceholders(row.source, value);
