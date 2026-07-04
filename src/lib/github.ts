@@ -137,6 +137,19 @@ export async function createTranslationPullRequest(
     env,
     `/repos/${owner}/${name}/git/ref/heads/${urlPath(branch)}`
   );
+
+  // Checked before any branch mutation: an open PR's one commit ahead of base is
+  // exactly what makes branchRef diverge from baseRef below. Force-pushing a
+  // branch back onto its base while a PR is open makes GitHub auto-close that
+  // PR (head has no commits left ahead of base) — which is what silently closed
+  // and endlessly reopened `translations/<lang>` PRs every Submit. Only reset a
+  // branch when nothing has it open.
+  const openBeforeMutation = await githubFetch<PullResponse[]>(
+    env,
+    `/repos/${owner}/${name}/pulls?state=open&base=${encodeURIComponent(base)}&head=${encodeURIComponent(`${owner}:${branch}`)}`
+  );
+  const hasOpenPr = !!(openBeforeMutation.value && openBeforeMutation.value.length > 0);
+
   if (!branchRef.value) {
     await githubFetch(env, `/repos/${owner}/${name}/git/refs`, {
       method: 'POST',
@@ -145,11 +158,12 @@ export async function createTranslationPullRequest(
         sha: baseRef.value.object.sha,
       }),
     });
-  } else if (branchRef.value.object.sha !== baseRef.value.object.sha) {
-    // The branch already exists and is stale (e.g. a previous PR for this
-    // language was merged, or base moved on). Reusing its old tip makes the new
-    // commit diverge from base and produces an unmergeable, conflicting PR.
-    // Force it back onto the current base so the only diff is our own file.
+  } else if (branchRef.value.object.sha !== baseRef.value.object.sha && !hasOpenPr) {
+    // The branch already exists, is stale (e.g. a previous PR for this language
+    // was merged, or base moved on), and nothing currently open depends on its
+    // commits. Reusing its old tip makes the new commit diverge from base and
+    // produces an unmergeable, conflicting PR, so force it back onto the
+    // current base first.
     await githubFetch(env, `/repos/${owner}/${name}/git/refs/heads/${urlPath(branch)}`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -177,14 +191,13 @@ export async function createTranslationPullRequest(
     body: JSON.stringify(body),
   });
 
-  const open = await githubFetch<PullResponse[]>(
-    env,
-    `/repos/${owner}/${name}/pulls?state=open&base=${encodeURIComponent(base)}&head=${encodeURIComponent(`${owner}:${branch}`)}`
-  );
-  if (open.value && open.value.length > 0) {
+  // Reuse the pre-mutation open-PR check: pushing a commit onto an existing
+  // branch never opens or closes a PR by itself, so that result is still
+  // accurate here and re-querying would just be a race-prone extra round trip.
+  if (hasOpenPr && openBeforeMutation.value) {
     return {
-      url: open.value[0].html_url,
-      number: open.value[0].number,
+      url: openBeforeMutation.value[0].html_url,
+      number: openBeforeMutation.value[0].number,
       branch,
       updatedExisting: true,
     };
