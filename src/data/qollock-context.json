@@ -1793,6 +1793,18 @@
     "section": "",
     "group": ""
   },
+  "Panel Tree Dump": {
+    "breadcrumb": "Dev",
+    "tab": "Dev",
+    "section": "",
+    "group": ""
+  },
+  "Build Storage Dry Run": {
+    "breadcrumb": "Dev",
+    "tab": "Dev",
+    "section": "",
+    "group": ""
+  },
   "Test Suite": {
     "breadcrumb": "Dev",
     "tab": "Dev",
